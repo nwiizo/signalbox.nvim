@@ -54,14 +54,56 @@ h.test("board renders grouped agents in attention order with local mappings", fu
   h.contains(lines[5], "idle")
   h.eq(4, vim.api.nvim_win_get_cursor(0)[1])
   h.eq(false, vim.wo.wrap)
+  h.truthy(vim.api.nvim_win_get_width(0) >= 36)
   for line, item in pairs(board._line_agents()) do
     h.truthy(vim.fn.strdisplaywidth(lines[line]) <= vim.api.nvim_win_get_width(0), item.terminal_id)
   end
+  local title_groups = {}
+  for _, chunk in ipairs(vim.api.nvim_win_get_config(0).title) do
+    title_groups[chunk[2]] = true
+  end
+  h.truthy(title_groups.SignalboxTitle)
+  h.truthy(title_groups.SignalboxBlocked)
+  local namespace = vim.api.nvim_get_namespaces()["signalbox-board"]
+  local rendered_groups = {}
+  local marks = vim.api.nvim_buf_get_extmarks(bufnr, namespace, 0, -1, { details = true })
+  for _, mark in ipairs(marks) do
+    rendered_groups[mark[4].hl_group] = true
+  end
+  h.truthy(rendered_groups.SignalboxWorkspace)
+  h.truthy(rendered_groups.SignalboxBlocked)
+  board.render()
+  h.eq(marks, vim.api.nvim_buf_get_extmarks(bufnr, namespace, 0, -1, { details = true }))
   h.truthy(vim.fn.maparg("a", "n", false, true).buffer == 1)
   local global_enter = vim.tbl_filter(function(mapping)
     return mapping.lhs == "<CR>"
   end, vim.api.nvim_get_keymap("n"))
   h.eq({}, global_enter)
+  board._reset()
+end)
+
+h.test("stable preview content is not replaced while a refresh is in flight", function()
+  reset()
+  state._accept({ agents = { agent("work", "working") }, workspaces = { { workspace_id = "w1", label = "one" } } })
+  local pending = {}
+  client._set_runner(function(argv, _, callback)
+    if argv[2] == "agent" and argv[3] == "read" then
+      table.insert(pending, callback)
+    end
+  end)
+  board.setup()
+  board.open()
+  h.truthy(vim.wait(1000, function()
+    return #pending == 1
+  end))
+  pending[1]({ code = 0, stdout = "stable preview", stderr = "" })
+  h.eq({ "stable preview" }, vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, -1, false))
+
+  board.refresh_preview({ force = true })
+  h.eq(2, #pending)
+  h.eq({ "stable preview" }, vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, -1, false))
+  pending[2]({ code = 0, stdout = "updated preview", stderr = "" })
+  h.eq({ "updated preview" }, vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, -1, false))
   board._reset()
 end)
 

@@ -12,6 +12,10 @@ local help_visible = false
 local show_all = false
 local preview_enabled = true
 local preview_generation = 0
+local preview_target
+local preview_in_flight
+local preview_last_read = 0
+local preview_cache = {}
 local closing_windows = false
 local origin_root
 local augroup
@@ -39,19 +43,22 @@ end
 
 local function dimension(value, total, minimum)
   local size = value < 1 and math.floor(total * value) or value
-  return math.max(minimum, math.min(size, total - 4))
+  return math.min(math.max(minimum, size), math.max(1, total - 4))
 end
 
 local function geometry()
   local board = config.get().board
-  local total_width = dimension(board.width, vim.o.columns, 44)
+  local total_width = dimension(board.width, vim.o.columns, 68)
   local height = dimension(board.height, vim.o.lines - vim.o.cmdheight, 10)
   local row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1)
   local col = math.max(0, math.floor((vim.o.columns - total_width) / 2))
   if not preview_enabled then
     return { row = row, col = col, height = height, list_width = total_width }
   end
-  local preview_width = math.floor((total_width - 2) * board.preview_ratio)
+  local usable_width = total_width - 2
+  local minimum_list_width = math.min(36, math.max(24, math.floor(usable_width * 0.6)))
+  local maximum_preview_width = math.max(16, usable_width - minimum_list_width)
+  local preview_width = math.min(math.floor(usable_width * board.preview_ratio), maximum_preview_width)
   return {
     row = row,
     col = col,
@@ -86,19 +93,28 @@ local function pad(value, width)
   return result .. string.rep(" ", math.max(0, width - vim.fn.strdisplaywidth(result)))
 end
 
-local function summary()
+local function agent_line(agent, marker, width)
+  if width >= 35 then
+    return string.format(" %s %s %s %s", marker, pad(agent.name, 15), pad(agent.kind, 7), agent.status)
+  end
+  local status_width = vim.fn.strdisplaywidth(agent.status)
+  local name_width = math.max(6, width - status_width - 5)
+  return string.format(" %s %s %s", marker, pad(agent.name, name_width), agent.status)
+end
+
+local function summary_title()
   local counts = state.counts()
   local markers = config.get().board.markers
-  local parts = { "Signalbox" }
+  local parts = { { " Signalbox ", "SignalboxTitle" } }
   for _, key in ipairs({ "blocked", "working", "done" }) do
     if counts[key] > 0 then
-      table.insert(parts, markers[key] .. counts[key])
+      table.insert(parts, { " " .. markers[key] .. counts[key] .. " ", highlight_for[key] })
     end
   end
   if state.get().stale then
-    table.insert(parts, "~stale")
+    table.insert(parts, { " ~stale ", "SignalboxUnknown" })
   end
-  return table.concat(parts, "  ")
+  return parts
 end
 
 local function selected_agent()
@@ -115,49 +131,91 @@ end
 
 local function set_lines(buffer, lines)
   if not valid_buffer(buffer) then
-    return
+    return false
+  end
+  if vim.deep_equal(vim.api.nvim_buf_get_lines(buffer, 0, -1, false), lines) then
+    return false
   end
   vim.bo[buffer].modifiable = true
   vim.api.nvim_buf_set_lines(buffer, 0, -1, false, lines)
   vim.bo[buffer].modifiable = false
+  return true
 end
 
 local function preview_message(lines)
-  set_lines(preview_buffer, lines)
+  return set_lines(preview_buffer, lines)
 end
 
-function M.refresh_preview()
+local function set_title(window, title)
+  if not valid_window(window) or vim.deep_equal(vim.api.nvim_win_get_config(window).title, title) then
+    return
+  end
+  pcall(vim.api.nvim_win_set_config, window, { title = title })
+end
+
+local function preview_title(agent, suffix_group)
+  return {
+    { " " .. agent.name .. " ", highlight_for[agent.status] },
+    { "· recent output ", suffix_group or "SignalboxMuted" },
+  }
+end
+
+function M.refresh_preview(opts)
+  opts = opts or {}
   if not preview_enabled or not valid_window(preview_window) then
     return
   end
   local agent = selected_agent()
-  preview_generation = preview_generation + 1
-  local generation = preview_generation
   if not agent then
-    preview_message({
-      "Select an agent to inspect its recent output.",
-      "",
-      "The preview is ephemeral and is never written to disk.",
-    })
+    if preview_target ~= false then
+      preview_generation = preview_generation + 1
+      preview_target = false
+      preview_in_flight = nil
+      preview_message({
+        "Select an agent to inspect its recent output.",
+        "",
+        "The preview is ephemeral and is never written to disk.",
+      })
+    end
     return
   end
-  preview_message({ string.format("Reading %s…", agent.name) })
+  local target = agent.terminal_id
+  local changed = preview_target ~= target
+  local now = vim.uv.now()
+  local throttle_ms = math.max(500, config.get().refresh.board_ms)
+  if preview_in_flight == target or (not changed and not opts.force and now - preview_last_read < throttle_ms) then
+    return
+  end
+
+  preview_target = target
+  preview_in_flight = target
+  preview_last_read = now
+  preview_generation = preview_generation + 1
+  local generation = preview_generation
+  if changed then
+    local cached = preview_cache[target]
+    preview_message(cached or { string.format("Reading %s…", agent.name) })
+    set_title(preview_window, preview_title(agent))
+  end
   require("signalbox.client").read(agent.target, config.get().board.preview_lines, function(output, err)
     if generation ~= preview_generation or not valid_buffer(preview_buffer) then
       return
     end
+    preview_in_flight = nil
     if err then
-      preview_message({ "Preview unavailable", "", err.message or err.kind or tostring(err) })
+      if not preview_cache[target] then
+        preview_message({ "Preview unavailable", "", err.message or err.kind or tostring(err) })
+      end
+      set_title(preview_window, preview_title(agent, "SignalboxUnknown"))
       return
     end
     local lines = vim.split((output or ""):gsub("%s+$", ""), "\n", { plain = true })
     if #lines == 1 and lines[1] == "" then
       lines = { "No terminal output yet." }
     end
+    preview_cache[target] = lines
     set_lines(preview_buffer, lines)
-    if valid_window(preview_window) then
-      pcall(vim.api.nvim_win_set_config, preview_window, { title = " " .. agent.name .. " · recent output " })
-    end
+    set_title(preview_window, preview_title(agent))
   end)
 end
 
@@ -184,16 +242,18 @@ function M.render()
   local width = valid_window(list_window) and vim.api.nvim_win_get_width(list_window) or 44
   local view_label = show_all and "all agents" or "this project + attention elsewhere"
   local lines = { " " .. view_label, "" }
-  local highlights = {}
+  local highlights = { [1] = "SignalboxMuted" }
   line_agents = {}
 
   if not status.snapshot then
     if status.error then
       table.insert(lines, "Herdr unavailable")
+      highlights[#lines] = "SignalboxBlocked"
       table.insert(lines, truncate(status.error.message or "unknown error", width - 2))
       render_guidance(lines, status.error)
     else
       table.insert(lines, "Loading Herdr agents…")
+      highlights[#lines] = "SignalboxWorking"
     end
   else
     if status.stale and status.error then
@@ -206,9 +266,10 @@ function M.render()
     end
     for _, group in ipairs(groups) do
       table.insert(lines, truncate(group.label, width - 2))
+      highlights[#lines] = "SignalboxWorkspace"
       for _, agent in ipairs(group.agents) do
         local marker = config.get().board.markers[agent.status]
-        local line = string.format(" %s %s %s %s", marker, pad(agent.name, 15), pad(agent.kind, 7), agent.status)
+        local line = agent_line(agent, marker, width)
         table.insert(lines, truncate(line, width - 1))
         line_agents[#lines] = agent
         highlights[#lines] = highlight_for[agent.status]
@@ -218,22 +279,28 @@ function M.render()
   end
 
   if help_visible then
+    local first_help_line = #lines + 2
     vim.list_extend(lines, {
       "",
       "<CR> attach   p prompt   a start",
       "g lazygit    d diff      v preview",
       "A all/view   r refresh   q close   ? help",
     })
+    for line = first_help_line, #lines do
+      highlights[line] = "SignalboxHelp"
+    end
   end
 
-  set_lines(list_buffer, lines)
-  vim.api.nvim_buf_clear_namespace(list_buffer, namespace, 0, -1)
-  for line, group in pairs(highlights) do
-    vim.api.nvim_buf_add_highlight(list_buffer, namespace, group, line - 1, 0, -1)
+  local contents_changed = set_lines(list_buffer, lines)
+  if contents_changed then
+    vim.api.nvim_buf_clear_namespace(list_buffer, namespace, 0, -1)
+    for line, group in pairs(highlights) do
+      vim.api.nvim_buf_add_highlight(list_buffer, namespace, group, line - 1, 0, -1)
+    end
   end
 
   if valid_window(list_window) then
-    pcall(vim.api.nvim_win_set_config, list_window, { title = " " .. summary() .. " " })
+    set_title(list_window, summary_title())
     local target_line
     if selected then
       for line, agent in pairs(line_agents) do
@@ -251,7 +318,10 @@ function M.render()
         end
       end
     end
-    pcall(vim.api.nvim_win_set_cursor, list_window, { target_line or 1, 0 })
+    target_line = target_line or 1
+    if vim.api.nvim_win_get_cursor(list_window)[1] ~= target_line then
+      pcall(vim.api.nvim_win_set_cursor, list_window, { target_line, 0 })
+    end
   end
   vim.schedule(M.refresh_preview)
 end
@@ -354,13 +424,19 @@ local function open_windows()
     height = layout.height,
     style = "minimal",
     border = "rounded",
-    title = " " .. summary() .. " ",
+    title = summary_title(),
     title_pos = "center",
     zindex = 50,
   })
   vim.wo[list_window].wrap = false
   vim.wo[list_window].cursorline = true
   vim.wo[list_window].signcolumn = "no"
+  vim.wo[list_window].winhighlight = table.concat({
+    "Normal:NormalFloat",
+    "FloatBorder:SignalboxBorder",
+    "FloatTitle:SignalboxTitle",
+    "CursorLine:CursorLine",
+  }, ",")
 
   if preview_enabled then
     preview_window = vim.api.nvim_open_win(preview_buffer, false, {
@@ -371,12 +447,17 @@ local function open_windows()
       height = layout.height,
       style = "minimal",
       border = "rounded",
-      title = " recent output ",
+      title = { { " recent output ", "SignalboxMuted" } },
       title_pos = "center",
       zindex = 50,
     })
     vim.wo[preview_window].wrap = true
     vim.wo[preview_window].signcolumn = "no"
+    vim.wo[preview_window].winhighlight = table.concat({
+      "Normal:NormalFloat",
+      "FloatBorder:SignalboxBorder",
+      "FloatTitle:SignalboxTitle",
+    }, ",")
   else
     preview_window = nil
   end
@@ -395,6 +476,7 @@ function M._reopen_windows()
   end
   list_window = nil
   preview_window = nil
+  preview_target = nil
   open_windows()
   closing_windows = false
   M.render()
@@ -407,6 +489,7 @@ function M.open()
   end
   origin_root = require("signalbox.context").project_root(0)
   preview_enabled = config.get().board.preview
+  preview_target = nil
   if not valid_buffer(list_buffer) then
     list_buffer = vim.api.nvim_create_buf(false, true)
     configure_list_buffer()
@@ -422,6 +505,8 @@ end
 
 function M.close()
   preview_generation = preview_generation + 1
+  preview_target = nil
+  preview_in_flight = nil
   closing_windows = true
   if valid_window(preview_window) then
     vim.api.nvim_win_close(preview_window, true)
@@ -443,13 +528,26 @@ function M.toggle()
   end
 end
 
+local function apply_highlights()
+  vim.api.nvim_set_hl(0, "SignalboxBlocked", { link = "ErrorMsg" })
+  vim.api.nvim_set_hl(0, "SignalboxWorking", { link = "Function" })
+  vim.api.nvim_set_hl(0, "SignalboxDone", { link = "String" })
+  vim.api.nvim_set_hl(0, "SignalboxIdle", { link = "Comment" })
+  vim.api.nvim_set_hl(0, "SignalboxUnknown", { link = "WarningMsg" })
+  vim.api.nvim_set_hl(0, "SignalboxTitle", { link = "Title" })
+  vim.api.nvim_set_hl(0, "SignalboxWorkspace", { link = "Function" })
+  vim.api.nvim_set_hl(0, "SignalboxBorder", { link = "FloatBorder" })
+  vim.api.nvim_set_hl(0, "SignalboxMuted", { link = "Comment" })
+  vim.api.nvim_set_hl(0, "SignalboxHelp", { link = "Special" })
+end
+
 function M.setup()
-  vim.api.nvim_set_hl(0, "SignalboxBlocked", { default = true, link = "DiagnosticError" })
-  vim.api.nvim_set_hl(0, "SignalboxWorking", { default = true, link = "DiagnosticInfo" })
-  vim.api.nvim_set_hl(0, "SignalboxDone", { default = true, link = "DiagnosticOk" })
-  vim.api.nvim_set_hl(0, "SignalboxIdle", { default = true, link = "Comment" })
-  vim.api.nvim_set_hl(0, "SignalboxUnknown", { default = true, link = "DiagnosticWarn" })
+  apply_highlights()
   augroup = vim.api.nvim_create_augroup("SignalboxBoard", { clear = true })
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group = augroup,
+    callback = apply_highlights,
+  })
   vim.api.nvim_create_autocmd("User", {
     group = augroup,
     pattern = "SignalboxUpdated",
@@ -508,6 +606,10 @@ function M._reset()
   help_visible = false
   show_all = false
   preview_enabled = true
+  preview_target = nil
+  preview_in_flight = nil
+  preview_last_read = 0
+  preview_cache = {}
   closing_windows = false
   origin_root = nil
   if augroup then
