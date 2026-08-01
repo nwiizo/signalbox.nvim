@@ -32,7 +32,7 @@ local defaults = {
     side = "right",
     width = 0.4,
     auto_insert = true,
-    return_key = "<C-\\>s",
+    return_key = "<C-g>",
   },
   notifications = {
     blocked = true,

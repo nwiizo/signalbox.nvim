@@ -367,8 +367,8 @@ h.test("attached terminals use a Neovim-owned chord to detach and return to the 
   local normal_leader_mapping
   local terminal_leader_mapping
   vim.api.nvim_buf_call(bufnr, function()
-    normal_mapping = vim.fn.maparg("<C-\\>s", "n", false, true)
-    terminal_mapping = vim.fn.maparg("<C-\\>s", "t", false, true)
+    normal_mapping = vim.fn.maparg("<C-g>", "n", false, true)
+    terminal_mapping = vim.fn.maparg("<C-g>", "t", false, true)
     normal_leader_mapping = vim.fn.maparg("<leader>as", "n", false, true)
     terminal_leader_mapping = vim.fn.maparg("<leader>as", "t", false, true)
   end)

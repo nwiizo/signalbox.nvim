@@ -13,7 +13,7 @@ h.test("config deep merges defaults without mutating caller options", function()
   local result = config.setup(opts)
   h.eq(52, result.board.width)
   h.eq(0.9, result.board.height)
-  h.eq("<C-\\>s", result.terminal.return_key)
+  h.eq("<C-g>", result.terminal.return_key)
   h.eq({ "--profile", "work" }, result.agents.codex.args)
   h.eq({}, result.agents.claude.args)
   result.agents.codex.args[1] = "changed"

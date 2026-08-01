@@ -66,13 +66,13 @@ With lazy.nvim or LazyVim:
     "SignalboxHealth",
   },
   keys = {
-    { "<C-\\>s", "<cmd>Signalbox<cr>", mode = { "n", "t" }, desc = "Agent Signalbox" },
+    { "<C-g>", "<cmd>Signalbox<cr>", mode = { "n", "t" }, desc = "Agent Signalbox" },
   },
   opts = {},
 }
 ```
 
-`<C-\>s` is only a recommendation. Signalbox defines no global mappings itself.
+`<C-g>` is only a recommendation. Signalbox defines no global mappings itself.
 `event = "VeryLazy"` starts background monitoring before the board is first opened; commands and keys can still load it earlier. With the default `auto_start_server = true`, it may also start the detached Herdr server on Neovim launch. Omit the event if you want Signalbox and Herdr to start only on demand and do not need ambient notifications.
 
 ## Workflow
@@ -110,7 +110,7 @@ The default view keeps agents from the current Git/Jujutsu root and also surface
 
 The right pane is deliberately a read-only, ephemeral view of recent output. Its title says `read-only`; press `i` or `<CR>` from either pane to replace the board with an interactive Herdr terminal in insert mode.
 
-Use `<C-\>s` (`Ctrl-\`, then `s`) as the single Signalbox key. In a normal editor buffer it opens the board and starts Herdr on demand; in a Signalbox-attached terminal it detaches the Neovim client, leaves the Herdr agent running, and returns directly to the board. The `Ctrl-\` prefix is owned by Neovim's terminal-mode, so Codex and Claude Code cannot consume it as prompt input. The terminal chord is configurable with `terminal.return_key`.
+Use `<C-g>` (`Ctrl-g`) as the single Signalbox key. In a normal editor buffer it opens the board and starts Herdr on demand; in a Signalbox-attached terminal its buffer-local mapping takes priority, detaches the Neovim client, leaves the Herdr agent running, and returns directly to the board. A single control chord has no mapping timeout in which Codex or Claude Code can consume a partial sequence. The terminal key is configurable with `terminal.return_key`.
 
 ## Commands
 
@@ -177,7 +177,7 @@ require("signalbox").setup({
     side = "right",
     width = 0.4,
     auto_insert = true,
-    return_key = "<C-\\>s",
+    return_key = "<C-g>",
   },
 })
 ```
