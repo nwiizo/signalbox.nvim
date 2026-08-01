@@ -54,7 +54,16 @@ h.test("board renders grouped agents in attention order with local mappings", fu
   h.contains(lines[5], "idle")
   h.eq(4, vim.api.nvim_win_get_cursor(0)[1])
   h.eq(false, vim.wo.wrap)
+  h.eq(40, vim.api.nvim_win_get_config(0).zindex)
   h.truthy(vim.api.nvim_win_get_width(0) >= 36)
+  local preview_found = false
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == board._preview_buffer() then
+      preview_found = true
+      h.eq(40, vim.api.nvim_win_get_config(win).zindex)
+    end
+  end
+  h.truthy(preview_found)
   for line, item in pairs(board._line_agents()) do
     h.truthy(vim.fn.strdisplaywidth(lines[line]) <= vim.api.nvim_win_get_width(0), item.terminal_id)
   end

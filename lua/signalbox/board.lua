@@ -20,6 +20,8 @@ local closing_windows = false
 local origin_root
 local augroup
 local namespace = vim.api.nvim_create_namespace("signalbox-board")
+-- Leave the default modal layer (50) available to vim.ui.select/input providers.
+local board_zindex = 40
 
 local highlight_for = {
   blocked = "SignalboxBlocked",
@@ -426,7 +428,7 @@ local function open_windows()
     border = "rounded",
     title = summary_title(),
     title_pos = "center",
-    zindex = 50,
+    zindex = board_zindex,
   })
   vim.wo[list_window].wrap = false
   vim.wo[list_window].cursorline = true
@@ -449,7 +451,7 @@ local function open_windows()
       border = "rounded",
       title = { { " recent output ", "SignalboxMuted" } },
       title_pos = "center",
-      zindex = 50,
+      zindex = board_zindex,
     })
     vim.wo[preview_window].wrap = true
     vim.wo[preview_window].signcolumn = "no"
