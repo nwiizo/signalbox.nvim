@@ -47,6 +47,28 @@ function M.default_agent_name(kind, project)
   return candidate ~= "" and candidate or "agent"
 end
 
+function M.next_agent_name(candidate, agents)
+  local used = {}
+  for _, agent in ipairs(agents or {}) do
+    if type(agent.registered_name) == "string" then
+      used[agent.registered_name] = true
+    end
+  end
+  if not used[candidate] then
+    return candidate
+  end
+  local index = 2
+  while true do
+    local suffix = "-" .. index
+    local prefix = candidate:sub(1, 32 - #suffix):gsub("[-_]+$", "")
+    local next_name = prefix .. suffix
+    if not used[next_name] then
+      return next_name
+    end
+    index = index + 1
+  end
+end
+
 local function default_runner(command, opts, callback)
   local ok, spawn_err = pcall(vim.system, command, { text = true, timeout = opts.timeout_ms }, function(result)
     vim.schedule(function()

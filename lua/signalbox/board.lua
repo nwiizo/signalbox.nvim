@@ -257,6 +257,42 @@ local function render_guidance(lines, err)
   end
 end
 
+local function help_lines(width)
+  local lines
+  if width < 28 then
+    lines = {
+      "<CR>/i attach",
+      "p/s prompt",
+      "a start",
+      "n rename",
+      "e explain",
+      "v preview",
+      "g lazygit",
+      "d diff",
+      "A all/view",
+      "r refresh",
+      "q close",
+      "? help",
+      "Tab preview",
+      config.get().terminal.return_key .. " return",
+    }
+  else
+    lines = {
+      "<CR>/i attach   p/s prompt",
+      "a start         n rename",
+      "e explain       v preview",
+      "g lazygit       d diff",
+      "A all/view      r refresh",
+      "q close         ? help",
+      "Tab focus preview",
+      config.get().terminal.return_key .. " return from terminal",
+    }
+  end
+  return vim.tbl_map(function(line)
+    return truncate(line, math.max(1, width - 1))
+  end, lines)
+end
+
 function M.render()
   if not valid_buffer(list_buffer) then
     return
@@ -265,7 +301,7 @@ function M.render()
   local status = state.get()
   local width = valid_window(list_window) and vim.api.nvim_win_get_width(list_window) or 44
   local view_label = show_all and "all agents" or "this project + attention elsewhere"
-  local lines = { " " .. view_label, "" }
+  local lines = { truncate(" " .. view_label, width - 1), "" }
   local highlights = { [1] = "SignalboxMuted" }
   line_agents = {}
 
@@ -304,13 +340,8 @@ function M.render()
 
   if help_visible then
     local first_help_line = #lines + 2
-    vim.list_extend(lines, {
-      "",
-      "<CR>/i attach p prompt   a start   n rename",
-      "e explain    g lazygit   d diff    v preview",
-      "A all/view   r refresh   q close   ? help   Tab panes",
-      "attached terminal: " .. config.get().terminal.return_key .. " returns here",
-    })
+    table.insert(lines, "")
+    vim.list_extend(lines, help_lines(width))
     for line = first_help_line, #lines do
       highlights[line] = "SignalboxHelp"
     end

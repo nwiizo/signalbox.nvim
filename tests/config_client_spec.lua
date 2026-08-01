@@ -130,6 +130,18 @@ h.test("client derives and validates Herdr-compatible agent names before allocat
   reset()
   config.setup()
   h.eq("codex-signalbox-nvim", client.default_agent_name("codex", "signalbox.nvim"))
+  h.eq("codex-signalbox-nvim", client.next_agent_name("codex-signalbox-nvim", {}))
+  h.eq(
+    "codex-signalbox-nvim-3",
+    client.next_agent_name("codex-signalbox-nvim", {
+      { registered_name = "codex-signalbox-nvim" },
+      { registered_name = "codex-signalbox-nvim-2" },
+      { name = "codex-signalbox-nvim-3" },
+    })
+  )
+  local bounded = client.next_agent_name(string.rep("a", 32), { { registered_name = string.rep("a", 32) } })
+  h.eq("-2", bounded:sub(-2))
+  h.truthy(#bounded <= 32)
   h.eq("agent", client.default_agent_name("123", "日本語"))
   h.eq("worker_2", client.validate_agent_name("worker_2"))
 

@@ -94,7 +94,43 @@ h.test("board renders grouped agents in attention order with local mappings", fu
     return mapping.lhs == "<CR>"
   end, vim.api.nvim_get_keymap("n"))
   h.eq({}, global_enter)
+  vim.fn.maparg("?", "n", false, true).callback()
+  lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  for line, value in ipairs(lines) do
+    h.truthy(
+      vim.fn.strdisplaywidth(value) <= vim.api.nvim_win_get_width(0),
+      string.format("help line %d should fit the board: %s", line, value)
+    )
+  end
   board._reset()
+end)
+
+h.test("narrow boards keep their labels and help within the visible width", function()
+  reset()
+  local old_columns = vim.o.columns
+  local old_lines = vim.o.lines
+  h.defer(function()
+    board._reset()
+    vim.o.columns = old_columns
+    vim.o.lines = old_lines
+  end)
+  vim.o.columns = 40
+  vim.o.lines = 12
+  state._accept({
+    agents = { agent("work", "idle") },
+    workspaces = { { workspace_id = "w1", label = "one" } },
+  })
+  board.setup()
+  board.open()
+  vim.fn.maparg("?", "n", false, true).callback()
+  local width = vim.api.nvim_win_get_width(0)
+  h.truthy(width < 28)
+  for line, value in ipairs(vim.api.nvim_buf_get_lines(board._buffer(), 0, -1, false)) do
+    h.truthy(
+      vim.fn.strdisplaywidth(value) <= width,
+      string.format("narrow line %d should fit the board: %s", line, value)
+    )
+  end
 end)
 
 h.test("board toggles between recent output and Herdr detection explanation", function()

@@ -417,6 +417,7 @@ h.test("starting an agent collects an initial instruction and attaches its live 
     state_stop = state.stop,
     state_refresh = state.refresh,
     ensure_server = client.ensure_server,
+    snapshot = client.snapshot,
     start_agent = client.start_agent,
     prompt = client.prompt,
     attach = terminal.attach,
@@ -433,11 +434,18 @@ h.test("starting an agent collects an initial instruction and attaches its live 
   local refreshes = 0
   state.start = function() end
   state.stop = function() end
-  state.refresh = function()
+  state.refresh = function(...)
     refreshes = refreshes + 1
+    return originals.state_refresh(...)
   end
   client.ensure_server = function(callback)
     callback(true)
+  end
+  client.snapshot = function(callback)
+    callback({
+      agents = { agent("term_1", "codex-signalbox-nvim", "idle") },
+      workspaces = { { workspace_id = "w1", label = "signalbox.nvim" } },
+    })
   end
   client.start_agent = function(kind, name, cwd, callback)
     started = { kind = kind, name = name, cwd = cwd }
@@ -465,13 +473,13 @@ h.test("starting an agent collects an initial instruction and attaches its live 
 
   signalbox.setup()
   signalbox.start("codex", { cwd = "/tmp/signalbox.nvim" })
-  h.eq("codex-signalbox-nvim", prompts[1].default)
+  h.eq("codex-signalbox-nvim-2", prompts[1].default)
   h.eq("Initial instruction (empty to skip, cancel to abort): ", prompts[2].prompt)
-  h.eq({ kind = "codex", name = "codex-signalbox-nvim", cwd = "/tmp/signalbox.nvim" }, started)
+  h.eq({ kind = "codex", name = "codex-signalbox-nvim-2", cwd = "/tmp/signalbox.nvim" }, started)
   h.eq({ target = "term_2:pane", instruction = "review the current diff" }, prompted)
   h.eq("term_2", attached.terminal_id)
   h.truthy(board_closed)
-  h.eq(1, refreshes)
+  h.eq(2, refreshes)
 
   started = nil
   signalbox.start("codex", {
@@ -493,12 +501,13 @@ h.test("starting an agent collects an initial instruction and attaches its live 
   })
   h.eq(false, board_closed)
   h.eq(nil, attached)
-  h.eq(2, refreshes)
+  h.eq(3, refreshes)
 
   state.start = originals.state_start
   state.stop = originals.state_stop
   state.refresh = originals.state_refresh
   client.ensure_server = originals.ensure_server
+  client.snapshot = originals.snapshot
   client.start_agent = originals.start_agent
   client.prompt = originals.prompt
   terminal.attach = originals.attach

@@ -101,7 +101,7 @@ Board mappings are buffer-local:
 | `p` / `s`    | Prompt the selected agent                                                                     |
 | `e`          | Toggle recent output / Herdr state-detection explanation                                      |
 | `n`          | Give the selected agent a stable role name                                                    |
-| `a`          | Name an agent, enter its first instruction, start it at the captured project root, and attach |
+| `a`          | Accept or edit an unused suggested name, enter the first instruction, start, and attach       |
 | `g`          | Open Snacks Lazygit at the selected agent's repository                                        |
 | `d`          | Open Diffview at the selected agent's repository                                              |
 | `v`          | Toggle recent-output preview                                                                  |
@@ -123,7 +123,7 @@ Use `<C-g>` (`Ctrl-g`) as the single Signalbox key. In a normal editor buffer it
 | ------------------------------------ | ------------------------------------------------------------------------------------ |
 | `:Signalbox`                         | Toggle the attention board                                                           |
 | `:SignalboxRefresh`                  | Refresh Herdr state immediately                                                      |
-| `:SignalboxStart [codex\|claude]`    | Name an agent, enter its first instruction, start it at the project root, and attach |
+| `:SignalboxStart [codex\|claude]`    | Accept or edit an unused suggested name, enter the first instruction, start, and attach |
 | `:SignalboxAttach[!] [target]`       | Attach; `!` explicitly takes over another direct client                              |
 | `:SignalboxPrompt [target]`          | Prompt an agent                                                                      |
 | `:SignalboxRename [target]`          | Give an agent a stable role name                                                     |
