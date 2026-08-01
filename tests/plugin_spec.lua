@@ -189,7 +189,7 @@ h.test("statusline is healthy, stale, and empty when Herdr is missing", function
   local original_stop = state.stop
   state.start = function() end
   state.stop = function() end
-  signalbox.setup()
+  signalbox.setup({ herdr_cmd = vim.v.progpath })
   state._set_transition_handler(function() end)
   state._set_emit(function() end)
   state._accept({

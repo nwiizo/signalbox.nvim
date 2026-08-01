@@ -69,7 +69,7 @@ h.test("context preserves UTF-8 endpoints for character selections", function()
     end_col = #"前",
   })
   h.contains(multiple, "🙂z\n前🙂")
-  h.truthy(vim.str_utfindex(multiple, "utf-32", #multiple) > 0)
+  h.truthy(vim.str_utfindex(multiple) > 0)
   vim.api.nvim_buf_delete(bufnr, { force = true })
 end)
 
