@@ -270,6 +270,54 @@ function M.attach(target, opts)
   end)
 end
 
+function M.rename(target)
+  ensure_setup()
+  with_target(target, function(agent)
+    vim.ui.input({ prompt = "Agent name: ", default = agent.registered_name or agent.name }, function(name)
+      if not name or name == "" or name == agent.registered_name then
+        return
+      end
+      local client = require("signalbox.client")
+      local _, name_err = client.validate_agent_name(name)
+      if name_err then
+        notify_error(name_err)
+        return
+      end
+      with_server(function()
+        client.snapshot(function(snapshot, snapshot_err)
+          if snapshot_err then
+            notify_error(snapshot_err)
+            return
+          end
+          local current
+          for _, candidate in ipairs(snapshot.agents) do
+            if candidate.terminal_id == agent.terminal_id then
+              current = candidate
+              break
+            end
+          end
+          if not current or current.kind ~= agent.kind or current.registered_name ~= agent.registered_name then
+            notify_error("agent changed while the rename prompt was open; select it again and retry")
+            return
+          end
+          client.rename(current.target, name, function(_, err)
+            if err then
+              notify_error(err)
+              return
+            end
+            vim.notify(
+              string.format("renamed %s to %s", current.name, name),
+              vim.log.levels.INFO,
+              { title = "Signalbox" }
+            )
+            require("signalbox.state").refresh({ explicit = true })
+          end)
+        end)
+      end)
+    end)
+  end)
+end
+
 local function prompt_agent(agent, text)
   if not text or text == "" then
     return

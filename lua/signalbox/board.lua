@@ -11,6 +11,7 @@ local line_agents = {}
 local help_visible = false
 local show_all = false
 local preview_enabled = true
+local preview_mode = "output"
 local preview_generation = 0
 local preview_target
 local preview_in_flight
@@ -160,9 +161,11 @@ local function set_title(window, title)
 end
 
 local function preview_title(agent, suffix_group)
+  local hint = preview_mode == "explain" and "· detection · e output · i attach "
+    or "· read-only · e explain · i attach "
   return {
     { " " .. agent.name .. " ", highlight_for[agent.status] },
-    { "· read-only · i attach ", suffix_group or "SignalboxMuted" },
+    { hint, suffix_group or "SignalboxMuted" },
   }
 end
 
@@ -192,43 +195,52 @@ function M.refresh_preview(opts)
     return
   end
   local target = agent.terminal_id
-  local changed = preview_target ~= target
+  local cache_key = preview_mode .. ":" .. target
+  local changed = preview_target ~= cache_key
   local now = vim.uv.now()
   local throttle_ms = math.max(500, config.get().refresh.board_ms)
-  if preview_in_flight == target or (not changed and not opts.force and now - preview_last_read < throttle_ms) then
+  if preview_in_flight == cache_key or (not changed and not opts.force and now - preview_last_read < throttle_ms) then
     return
   end
 
-  preview_target = target
-  preview_in_flight = target
+  preview_target = cache_key
+  preview_in_flight = cache_key
   preview_last_read = now
   preview_generation = preview_generation + 1
   local generation = preview_generation
   if changed then
-    local cached = preview_cache[target]
-    preview_message(cached or { string.format("Reading %s…", agent.name) })
+    local cached = preview_cache[cache_key]
+    local pending = preview_mode == "explain" and string.format("Explaining %s state…", agent.name)
+      or string.format("Reading %s…", agent.name)
+    preview_message(cached or { pending })
     set_title(preview_window, preview_title(agent))
   end
-  require("signalbox.client").read(agent.target, config.get().board.preview_lines, function(output, err)
+  local callback = function(output, err)
     if generation ~= preview_generation or not valid_buffer(preview_buffer) then
       return
     end
     preview_in_flight = nil
     if err then
-      if not preview_cache[target] then
-        preview_message({ "Preview unavailable", "", err.message or err.kind or tostring(err) })
+      if not preview_cache[cache_key] then
+        local label = preview_mode == "explain" and "Explanation unavailable" or "Preview unavailable"
+        preview_message({ label, "", err.message or err.kind or tostring(err) })
       end
       set_title(preview_window, preview_title(agent, "SignalboxUnknown"))
       return
     end
     local lines = vim.split((output or ""):gsub("%s+$", ""), "\n", { plain = true })
     if #lines == 1 and lines[1] == "" then
-      lines = { "No terminal output yet." }
+      lines = { preview_mode == "explain" and "Herdr returned no detection explanation." or "No terminal output yet." }
     end
-    preview_cache[target] = lines
+    preview_cache[cache_key] = lines
     set_lines(preview_buffer, lines)
     set_title(preview_window, preview_title(agent))
-  end)
+  end
+  if preview_mode == "explain" then
+    require("signalbox.client").explain(agent.target, callback)
+  else
+    require("signalbox.client").read(agent.target, config.get().board.preview_lines, callback)
+  end
 end
 
 local function render_guidance(lines, err)
@@ -294,8 +306,8 @@ function M.render()
     local first_help_line = #lines + 2
     vim.list_extend(lines, {
       "",
-      "<CR>/i attach p prompt   a start",
-      "g lazygit    d diff      v preview",
+      "<CR>/i attach p prompt   a start   n rename",
+      "e explain    g lazygit   d diff    v preview",
       "A all/view   r refresh   q close   ? help   Tab panes",
       "attached terminal: " .. config.get().terminal.return_key .. " returns here",
     })
@@ -366,6 +378,22 @@ local function prompt_selected()
   end
 end
 
+local function rename_selected()
+  local agent = require_agent_row()
+  if agent then
+    require("signalbox").rename(agent.terminal_id)
+  end
+end
+
+local function toggle_explanation()
+  if not require_agent_row() then
+    return
+  end
+  preview_mode = preview_mode == "explain" and "output" or "explain"
+  preview_target = nil
+  M.refresh_preview({ force = true })
+end
+
 local function configure_list_buffer()
   vim.bo[list_buffer].buftype = "nofile"
   vim.bo[list_buffer].bufhidden = "hide"
@@ -379,6 +407,8 @@ local function configure_list_buffer()
   map("i", attach_selected, "Attach and type in agent")
   map("p", prompt_selected, "Prompt agent")
   map("s", prompt_selected, "Prompt agent")
+  map("n", rename_selected, "Rename agent")
+  map("e", toggle_explanation, "Toggle agent state explanation")
   map("a", function()
     require("signalbox").start(nil, { cwd = origin_root })
   end, "Start agent")
@@ -435,6 +465,13 @@ local function configure_preview_buffer()
   vim.keymap.set("n", "i", attach_selected, vim.tbl_extend("force", opts, { desc = "Attach and type in agent" }))
   vim.keymap.set("n", "p", prompt_selected, vim.tbl_extend("force", opts, { desc = "Prompt agent" }))
   vim.keymap.set("n", "s", prompt_selected, vim.tbl_extend("force", opts, { desc = "Prompt agent" }))
+  vim.keymap.set("n", "n", rename_selected, vim.tbl_extend("force", opts, { desc = "Rename agent" }))
+  vim.keymap.set(
+    "n",
+    "e",
+    toggle_explanation,
+    vim.tbl_extend("force", opts, { desc = "Toggle agent state explanation" })
+  )
   vim.keymap.set("n", "a", function()
     require("signalbox").start(nil, { cwd = origin_root })
   end, vim.tbl_extend("force", opts, { desc = "Start agent" }))
@@ -570,6 +607,7 @@ function M.open()
   end
   origin_root = require("signalbox.context").project_root(0)
   preview_enabled = config.get().board.preview
+  preview_mode = "output"
   preview_target = nil
   if not valid_buffer(list_buffer) then
     list_buffer = vim.api.nvim_create_buf(false, true)
@@ -687,6 +725,7 @@ function M._reset()
   help_visible = false
   show_all = false
   preview_enabled = true
+  preview_mode = "output"
   preview_target = nil
   preview_in_flight = nil
   preview_last_read = 0

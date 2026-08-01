@@ -24,12 +24,14 @@ That job shapes the product:
 - 90% floating attention board, sized like a full-screen Lazygit workflow
 - Current project agents plus `blocked`/`done` agents elsewhere by default
 - Ephemeral recent-output preview for the selected agent
+- One-key Herdr state explanation with matched detection rule and evidence
+- Stable role names for agents discovered outside Signalbox
 - Notifications when an agent becomes blocked or completes work
 - Herdr 0.7.5 workspace/tab creation and persistent Codex/Claude launches
 - Direct attach in a native right-hand Neovim terminal
 - Prompt, file, visual selection, range, and LSP diagnostic context
 - Optional `Snacks.lazygit` and Diffview actions from the selected agent's cwd
-- Compact attention-only status component and `:checkhealth signalbox`
+- Compact attention-only status component and `:checkhealth signalbox`, including detection-manifest freshness
 - Pure Lua with no required Neovim plugin dependency
 
 ## Requirements
@@ -60,6 +62,7 @@ With lazy.nvim or LazyVim:
     "SignalboxStart",
     "SignalboxAttach",
     "SignalboxPrompt",
+    "SignalboxRename",
     "SignalboxSendVisual",
     "SignalboxSendFile",
     "SignalboxSendDiagnostics",
@@ -96,6 +99,8 @@ Board mappings are buffer-local:
 | ------------ | --------------------------------------------------------------------------------------------- |
 | `<CR>` / `i` | Leave the read-only preview and attach to the selected agent's interactive terminal           |
 | `p` / `s`    | Prompt the selected agent                                                                     |
+| `e`          | Toggle recent output / Herdr state-detection explanation                                      |
+| `n`          | Give the selected agent a stable role name                                                    |
 | `a`          | Name an agent, enter its first instruction, start it at the captured project root, and attach |
 | `g`          | Open Snacks Lazygit at the selected agent's repository                                        |
 | `d`          | Open Diffview at the selected agent's repository                                              |
@@ -121,6 +126,7 @@ Use `<C-g>` (`Ctrl-g`) as the single Signalbox key. In a normal editor buffer it
 | `:SignalboxStart [codex\|claude]`    | Name an agent, enter its first instruction, start it at the project root, and attach |
 | `:SignalboxAttach[!] [target]`       | Attach; `!` explicitly takes over another direct client                              |
 | `:SignalboxPrompt [target]`          | Prompt an agent                                                                      |
+| `:SignalboxRename [target]`          | Give an agent a stable role name                                                     |
 | `:[range]SignalboxPrompt [target]`   | Prompt with complete lines from a range                                              |
 | `:'<,'>SignalboxSendVisual [target]` | Prompt with the exact visual selection                                               |
 | `:SignalboxSendFile [target]`        | Send the saved current-file reference                                                |
@@ -128,6 +134,8 @@ Use `<C-g>` (`Ctrl-g`) as the single Signalbox key. In a normal editor buffer it
 | `:SignalboxHealth`                   | Run `:checkhealth signalbox`                                                         |
 
 Targets accept stable terminal IDs, current pane IDs, or an unambiguous agent name.
+
+`:checkhealth signalbox` reads Herdr's active detection-manifest status without changing it. A missing check time or one older than seven days is a warning with the explicit `herdr server update-agent-manifests` recovery command; local overrides are reported separately because they intentionally shadow remote rules.
 
 ## Ambient status
 

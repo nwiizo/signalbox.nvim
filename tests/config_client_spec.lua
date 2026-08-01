@@ -273,6 +273,52 @@ h.test("client uses current Herdr argv contracts for snapshot, start, prompt, an
   )
 end)
 
+h.test("client uses Herdr argv contracts for rename and detection explanation", function()
+  reset()
+  config.setup()
+  local calls = {}
+  local explanation
+  local renamed
+  client._set_runner(function(argv, _, callback)
+    table.insert(calls, vim.deepcopy(argv))
+    if argv[3] == "explain" then
+      callback({ code = 0, stdout = "agent: codex\nstate: idle\nrule: osc_title_idle\n", stderr = "" })
+    else
+      callback({
+        code = 0,
+        stdout = vim.json.encode({ id = "1", result = { type = "agent_renamed" } }),
+        stderr = "",
+      })
+    end
+  end)
+  client.rename("w1:p1", "reviewer", function(result)
+    renamed = result
+  end)
+  client.explain("w1:p1", function(output)
+    explanation = output
+  end)
+  h.eq("agent_renamed", renamed.type)
+  h.contains(explanation, "osc_title_idle")
+  h.eq({ "herdr", "agent", "rename", "w1:p1", "reviewer" }, calls[1])
+  h.eq({ "herdr", "agent", "explain", "w1:p1", "--format", "text" }, calls[2])
+end)
+
+h.test("client rejects an invalid rename before invoking Herdr", function()
+  reset()
+  config.setup()
+  local result
+  local err
+  client._set_runner(function()
+    error("invalid names must not invoke Herdr")
+  end)
+  client.rename("w1:p1", "Review Team", function(value, value_err)
+    result = value
+    err = value_err
+  end)
+  h.eq(nil, result)
+  h.eq("validation", err.kind)
+end)
+
 h.test("client creates a workspace when no pane belongs to the project", function()
   reset()
   config.setup({ agents = { codex = { args = { "--profile", "work" } } } })

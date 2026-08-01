@@ -66,7 +66,7 @@ h.test("board renders grouped agents in attention order with local mappings", fu
   h.truthy(preview_found)
   h.truthy(vim.fn.maparg("<Tab>", "n", false, true).buffer == 1)
   vim.api.nvim_buf_call(board._preview_buffer(), function()
-    for _, key in ipairs({ "<CR>", "i", "p", "s", "a", "g", "d", "v", "A", "r", "q", "?", "<Tab>" }) do
+    for _, key in ipairs({ "<CR>", "i", "p", "s", "n", "e", "a", "g", "d", "v", "A", "r", "q", "?", "<Tab>" }) do
       h.truthy(vim.fn.maparg(key, "n", false, true).buffer == 1, key .. " should be local to the preview")
     end
   end)
@@ -94,6 +94,62 @@ h.test("board renders grouped agents in attention order with local mappings", fu
     return mapping.lhs == "<CR>"
   end, vim.api.nvim_get_keymap("n"))
   h.eq({}, global_enter)
+  board._reset()
+end)
+
+h.test("board toggles between recent output and Herdr detection explanation", function()
+  reset()
+  state._accept({ agents = { agent("work", "idle") }, workspaces = { { workspace_id = "w1", label = "one" } } })
+  client._set_runner(function(argv, _, callback)
+    if argv[2] == "agent" and argv[3] == "explain" then
+      callback({ code = 0, stdout = "agent: codex\nstate: idle\nrule: osc_title_idle\n", stderr = "" })
+    elseif argv[2] == "agent" and argv[3] == "read" then
+      callback({ code = 0, stdout = "recent output", stderr = "" })
+    end
+  end)
+  board.setup()
+  board.open()
+  h.truthy(vim.wait(1000, function()
+    return vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, -1, false)[1] == "recent output"
+  end))
+  vim.fn.maparg("e", "n", false, true).callback()
+  h.truthy(vim.wait(1000, function()
+    return vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, -1, false)[1] == "agent: codex"
+  end))
+  local preview_window = vim.fn.win_findbuf(board._preview_buffer())[1]
+  local title = vim.api.nvim_win_get_config(preview_window).title
+  local chunks = {}
+  for _, chunk in ipairs(title) do
+    table.insert(chunks, chunk[1])
+  end
+  h.contains(table.concat(chunks), "detection")
+  vim.fn.maparg("e", "n", false, true).callback()
+  h.eq({ "recent output" }, vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, -1, false))
+  board._reset()
+end)
+
+h.test("rapid explanation toggles cannot let stale callbacks replace the final output mode", function()
+  reset()
+  state._accept({ agents = { agent("work", "idle") }, workspaces = { { workspace_id = "w1", label = "one" } } })
+  local pending = { output = {}, explain = {} }
+  client._set_runner(function(argv, _, callback)
+    local kind = argv[3] == "explain" and "explain" or "output"
+    table.insert(pending[kind], callback)
+  end)
+  board.setup()
+  board.open()
+  h.truthy(vim.wait(1000, function()
+    return #pending.output == 1
+  end))
+  vim.fn.maparg("e", "n", false, true).callback()
+  vim.fn.maparg("e", "n", false, true).callback()
+  h.eq(1, #pending.explain)
+  h.eq(2, #pending.output)
+
+  pending.output[2]({ code = 0, stdout = "final recent output", stderr = "" })
+  pending.explain[1]({ code = 0, stdout = "stale explanation", stderr = "" })
+  pending.output[1]({ code = 0, stdout = "stale recent output", stderr = "" })
+  h.eq({ "final recent output" }, vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, -1, false))
   board._reset()
 end)
 

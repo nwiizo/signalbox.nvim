@@ -12,8 +12,8 @@ For every new stable release:
 2. Capture fresh `--help` output for the lifecycle commands used by Signalbox.
 3. Run `make check`.
 4. Start a disposable Herdr server, workspace, and agent.
-5. Verify snapshot normalization and pane targeting.
-6. Verify preview, board rendering, start, prompt, attach, and cleanup behavior.
+5. Verify snapshot normalization, pane targeting, `agent explain`, `agent rename`, and `server agent-manifests`.
+6. Verify preview/explain switching, rename race protection, board rendering, start, prompt, attach, and cleanup behavior.
 7. Update the verified version in `lua/signalbox/compatibility.lua`, `README.md`, this document, and `.github/workflows/monitor-herdr.yml`.
 8. Document shims or migrations here before closing the audit issue.
 

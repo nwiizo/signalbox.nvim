@@ -9,6 +9,7 @@ h.test("plugin registers the approved user commands", function()
     "SignalboxStart",
     "SignalboxAttach",
     "SignalboxPrompt",
+    "SignalboxRename",
     "SignalboxSendVisual",
     "SignalboxSendFile",
     "SignalboxSendDiagnostics",
@@ -54,6 +55,7 @@ local function agent(id, name, status)
     focused = false,
     revision = 1,
     name = name,
+    registered_name = name,
     kind = "codex",
     title = "",
     cwd = vim.fn.getcwd(),
@@ -176,6 +178,226 @@ h.test("agent command targets use stable IDs and reject ambiguous names", functi
   local resolved, err = signalbox._find_agent("worker")
   h.eq(nil, resolved)
   h.contains(err, "ambiguous")
+end)
+
+h.test("rename prompts with the current role and refreshes after Herdr accepts it", function()
+  local signalbox = require("signalbox")
+  local state = require("signalbox.state")
+  local client = require("signalbox.client")
+  local config = require("signalbox.config")
+  signalbox._reset()
+  state._reset()
+  client._reset()
+  config._reset()
+
+  local originals = {
+    state_start = state.start,
+    state_stop = state.stop,
+    state_refresh = state.refresh,
+    ensure_server = client.ensure_server,
+    snapshot = client.snapshot,
+    rename = client.rename,
+    input = vim.ui.input,
+    notify = vim.notify,
+  }
+  h.defer(function()
+    state.start = originals.state_start
+    state.stop = originals.state_stop
+    state.refresh = originals.state_refresh
+    client.ensure_server = originals.ensure_server
+    client.snapshot = originals.snapshot
+    client.rename = originals.rename
+    vim.ui.input = originals.input
+    vim.notify = originals.notify
+    signalbox._reset()
+    state._reset()
+    client._reset()
+    config._reset()
+  end)
+  local renamed
+  local refreshes = 0
+  state.start = function() end
+  state.stop = function() end
+  state.refresh = function()
+    refreshes = refreshes + 1
+  end
+  client.ensure_server = function(callback)
+    callback(true)
+  end
+  client.snapshot = function(callback)
+    local current = vim.deepcopy(state.agents()[1])
+    current.status = "done"
+    current.revision = current.revision + 1
+    callback({ agents = { current } })
+  end
+  client.rename = function(target, name, callback)
+    renamed = { target = target, name = name }
+    callback({ type = "agent_renamed" })
+  end
+  vim.ui.input = function(opts, callback)
+    h.eq("worker", opts.default)
+    callback("reviewer")
+  end
+  vim.notify = function() end
+
+  signalbox.setup()
+  state._set_transition_handler(function() end)
+  state._set_emit(function() end)
+  state._accept({
+    agents = { agent("term_1", "worker") },
+    workspaces = { { workspace_id = "w1", label = "repo" } },
+  })
+  signalbox.rename("term_1")
+  h.eq({ target = "term_1:pane", name = "reviewer" }, renamed)
+  h.eq(1, refreshes)
+end)
+
+h.test("rename aborts when the selected agent changes while the input is open", function()
+  local signalbox = require("signalbox")
+  local state = require("signalbox.state")
+  local client = require("signalbox.client")
+  local config = require("signalbox.config")
+  signalbox._reset()
+  state._reset()
+  client._reset()
+  config._reset()
+
+  local originals = {
+    state_start = state.start,
+    state_stop = state.stop,
+    state_refresh = state.refresh,
+    ensure_server = client.ensure_server,
+    snapshot = client.snapshot,
+    rename = client.rename,
+    input = vim.ui.input,
+    notify = vim.notify,
+  }
+  h.defer(function()
+    state.start = originals.state_start
+    state.stop = originals.state_stop
+    state.refresh = originals.state_refresh
+    client.ensure_server = originals.ensure_server
+    client.snapshot = originals.snapshot
+    client.rename = originals.rename
+    vim.ui.input = originals.input
+    vim.notify = originals.notify
+    signalbox._reset()
+    state._reset()
+    client._reset()
+    config._reset()
+  end)
+  local input_callback
+  local rename_called = false
+  local notifications = {}
+  state.start = function() end
+  state.stop = function() end
+  state.refresh = function() end
+  client.ensure_server = function(callback)
+    callback(true)
+  end
+  client.snapshot = function(callback)
+    callback({ agents = state.agents() })
+  end
+  client.rename = function()
+    rename_called = true
+  end
+  vim.ui.input = function(_, callback)
+    input_callback = callback
+  end
+  vim.notify = function(message)
+    table.insert(notifications, message)
+  end
+
+  signalbox.setup()
+  state._set_transition_handler(function() end)
+  state._set_emit(function() end)
+  state._accept({
+    agents = { agent("term_1", "worker") },
+    workspaces = { { workspace_id = "w1", label = "repo" } },
+  })
+  signalbox.rename("term_1")
+  h.truthy(input_callback ~= nil)
+  local replacement = agent("term_2", "replacement")
+  replacement.pane_id = "term_1:pane"
+  replacement.target = "term_1:pane"
+  state._accept({
+    agents = { replacement },
+    workspaces = { { workspace_id = "w1", label = "repo" } },
+  })
+  input_callback("reviewer")
+  h.eq(false, rename_called)
+  h.contains(table.concat(notifications, "\n"), "agent changed")
+end)
+
+h.test("rename aborts when the selected agent is renamed elsewhere while the input is open", function()
+  local signalbox = require("signalbox")
+  local state = require("signalbox.state")
+  local client = require("signalbox.client")
+  local config = require("signalbox.config")
+  signalbox._reset()
+  state._reset()
+  client._reset()
+  config._reset()
+
+  local originals = {
+    state_start = state.start,
+    state_stop = state.stop,
+    state_refresh = state.refresh,
+    ensure_server = client.ensure_server,
+    snapshot = client.snapshot,
+    rename = client.rename,
+    input = vim.ui.input,
+    notify = vim.notify,
+  }
+  h.defer(function()
+    state.start = originals.state_start
+    state.stop = originals.state_stop
+    state.refresh = originals.state_refresh
+    client.ensure_server = originals.ensure_server
+    client.snapshot = originals.snapshot
+    client.rename = originals.rename
+    vim.ui.input = originals.input
+    vim.notify = originals.notify
+    signalbox._reset()
+    state._reset()
+    client._reset()
+    config._reset()
+  end)
+
+  local rename_called = false
+  local notifications = {}
+  state.start = function() end
+  state.stop = function() end
+  state.refresh = function() end
+  client.ensure_server = function(callback)
+    callback(true)
+  end
+  client.snapshot = function(callback)
+    local current = vim.deepcopy(state.agents()[1])
+    current.name = "reviewer"
+    current.registered_name = "reviewer"
+    callback({ agents = { current } })
+  end
+  client.rename = function()
+    rename_called = true
+  end
+  vim.ui.input = function(_, callback)
+    callback("tests")
+  end
+  vim.notify = function(message)
+    table.insert(notifications, message)
+  end
+
+  signalbox.setup()
+  state._set_transition_handler(function() end)
+  state._set_emit(function() end)
+  state._accept({
+    agents = { agent("term_1", "worker") },
+    workspaces = { { workspace_id = "w1", label = "repo" } },
+  })
+  signalbox.rename("term_1")
+  h.eq(false, rename_called)
+  h.contains(table.concat(notifications, "\n"), "agent changed")
 end)
 
 h.test("starting an agent collects an initial instruction and attaches its live terminal", function()

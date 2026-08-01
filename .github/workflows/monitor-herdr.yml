@@ -77,9 +77,9 @@ jobs:
                 `Signalbox is currently verified against **${verified}**.\n\n` +
                 `## Compatibility checklist\n\n` +
                 `- [ ] Review upstream release notes and socket/API changes\n` +
-                `- [ ] Compare \`api snapshot\`, \`workspace create\`, \`tab create\`, \`agent start\`, \`agent prompt\`, \`agent read\`, and \`agent attach\` contracts\n` +
+                `- [ ] Compare \`api snapshot\`, lifecycle commands, \`agent explain\`, \`agent rename\`, and \`server agent-manifests\` contracts\n` +
                 `- [ ] Run \`make check\` with Herdr ${tag}\n` +
-                `- [ ] Run the real snapshot, preview, board, start, prompt, and attach smoke tests\n` +
-                `- [ ] Update the verified version in health checks, README, \`docs/upstream-herdr.md\`, and this workflow\n` +
+                `- [ ] Run the real snapshot, preview/explain, rename, board, start, prompt, attach, and manifest-health smoke tests\n` +
+                `- [ ] Update the verified version in \`lua/signalbox/compatibility.lua\`, README, \`docs/upstream-herdr.md\`, and this workflow\n` +
                 `- [ ] Record any migration or compatibility shim in \`docs/upstream-herdr.md\`\n`,
             });

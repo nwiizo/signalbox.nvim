@@ -428,6 +428,25 @@ function M.prompt(target, text, callback)
   run_json({ "agent", "prompt", target, text }, callback)
 end
 
+function M.rename(target, name, callback)
+  local _, name_err = M.validate_agent_name(name)
+  if name_err then
+    callback(nil, name_err)
+    return
+  end
+  run_json({ "agent", "rename", target, name }, callback)
+end
+
+function M.explain(target, callback)
+  run({ "agent", "explain", target, "--format", "text" }, {}, function(result, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+    callback(result.stdout or "")
+  end)
+end
+
 function M.read(target, lines, callback)
   run(
     { "agent", "read", target, "--source", "recent-unwrapped", "--lines", tostring(lines), "--format", "text" },

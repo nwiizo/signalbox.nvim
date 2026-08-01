@@ -39,7 +39,7 @@ Signalbox stores no transcript and no duplicate session database. `terminal_id` 
 2. Show current-project agents plus blocked/done work elsewhere.
 3. Sort agent rows by blocked, done, working, idle, unknown.
 4. Read only the selected agent's recent unwrapped terminal output.
-5. Let the operator attach, prompt, start, inspect Git, or open a diff.
+5. Let the operator explain a surprising state, rename a role, attach, prompt, start, inspect Git, or open a diff.
 6. Preserve Herdr state when the board or Neovim closes.
 
 ## Milestones

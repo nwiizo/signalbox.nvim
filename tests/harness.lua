@@ -1,4 +1,5 @@
 local M = { total = 0, failed = 0 }
+local deferred
 
 local function inspect(value)
   return vim.inspect(value)
@@ -30,9 +31,28 @@ function M.raises(expected, callback)
   M.contains(tostring(err), expected)
 end
 
+function M.defer(callback)
+  assert(deferred, "h.defer must be called inside h.test")
+  table.insert(deferred, 1, callback)
+end
+
 function M.test(name, callback)
   M.total = M.total + 1
+  deferred = {}
   local ok, err = xpcall(callback, debug.traceback)
+  local cleanups = deferred
+  deferred = nil
+  for _, cleanup in ipairs(cleanups) do
+    local cleanup_ok, cleanup_err = xpcall(cleanup, debug.traceback)
+    if not cleanup_ok then
+      if ok then
+        ok = false
+        err = cleanup_err
+      else
+        err = tostring(err) .. "\ncleanup failed:\n" .. tostring(cleanup_err)
+      end
+    end
+  end
   if ok then
     io.stdout:write("ok - " .. name .. "\n")
   else

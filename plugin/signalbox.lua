@@ -48,6 +48,16 @@ end, {
   desc = "Prompt an agent, optionally with a line range",
 })
 
+vim.api.nvim_create_user_command("SignalboxRename", function(args)
+  require("signalbox").rename(args.args ~= "" and args.args or nil)
+end, {
+  nargs = "?",
+  complete = function()
+    return require("signalbox")._complete_agents()
+  end,
+  desc = "Give a Herdr agent a stable role name",
+})
+
 vim.api.nvim_create_user_command("SignalboxSendVisual", function(args)
   if args.range == 0 then
     vim.notify("SignalboxSendVisual requires a visual range", vim.log.levels.ERROR, { title = "Signalbox" })

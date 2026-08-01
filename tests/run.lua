@@ -5,5 +5,6 @@ require("tests.notifier_spec")
 require("tests.board_terminal_spec")
 require("tests.plugin_spec")
 require("tests.compatibility_spec")
+require("tests.health_spec")
 
 require("tests.harness").finish()
