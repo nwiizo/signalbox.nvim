@@ -2,6 +2,7 @@ local M = {}
 
 local initialized = false
 local cleanup_group
+local lifecycle_generation = 0
 
 local function message(err)
   if type(err) == "table" then
@@ -117,6 +118,8 @@ function M.setup(opts)
   if initialized then
     require("signalbox.state").stop()
   end
+  lifecycle_generation = lifecycle_generation + 1
+  local setup_generation = lifecycle_generation
   require("signalbox.client").mark_server_unavailable()
   require("signalbox.board").setup()
   require("signalbox.notifier")._reset()
@@ -131,7 +134,7 @@ function M.setup(opts)
     end,
   })
   vim.schedule(function()
-    if initialized then
+    if initialized and lifecycle_generation == setup_generation then
       require("signalbox.state").start()
     end
   end)
@@ -338,6 +341,7 @@ function M._complete_agent_kinds()
 end
 
 function M._reset()
+  lifecycle_generation = lifecycle_generation + 1
   initialized = false
   if cleanup_group then
     pcall(vim.api.nvim_del_augroup_by_id, cleanup_group)

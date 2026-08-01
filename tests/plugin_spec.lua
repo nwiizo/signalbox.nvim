@@ -234,3 +234,30 @@ h.test("invalid reconfiguration does not stop a working instance", function()
   state._reset()
   config._reset()
 end)
+
+h.test("only the latest setup lifecycle may start background state", function()
+  local signalbox = require("signalbox")
+  local state = require("signalbox.state")
+  local config = require("signalbox.config")
+  signalbox._reset()
+  state._reset()
+  config._reset()
+  local original_start = state.start
+  local original_stop = state.stop
+  local starts = 0
+  state.start = function()
+    starts = starts + 1
+  end
+  state.stop = function() end
+  signalbox.setup()
+  signalbox.setup()
+  h.truthy(vim.wait(1000, function()
+    return starts == 1
+  end))
+  h.eq(1, starts)
+  signalbox._reset()
+  state.start = original_start
+  state.stop = original_stop
+  state._reset()
+  config._reset()
+end)
