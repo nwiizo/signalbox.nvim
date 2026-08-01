@@ -1,0 +1,85 @@
+name: Monitor Herdr releases
+
+on:
+  schedule:
+    - cron: "23 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: monitor-herdr-releases
+  cancel-in-progress: false
+
+jobs:
+  check-latest-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Compare latest Herdr release with verified version
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          VERIFIED_HERDR_VERSION: 0.7.5
+        with:
+          script: |
+            const upstream = await github.rest.repos.getLatestRelease({
+              owner: "herdrdev",
+              repo: "herdr",
+            });
+            const tag = upstream.data.tag_name;
+            const latest = tag.replace(/^v/, "");
+            const verified = process.env.VERIFIED_HERDR_VERSION;
+            core.info(`Latest Herdr: ${latest}; verified by Signalbox: ${verified}`);
+
+            if (latest === verified) {
+              core.info("Signalbox is verified against the latest Herdr release.");
+              return;
+            }
+
+            const marker = `<!-- signalbox-herdr-release:${tag} -->`;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "all",
+              per_page: 100,
+            });
+            const existing = issues.find((issue) => issue.body && issue.body.includes(marker));
+            if (existing) {
+              if (existing.state === "closed") {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing.number,
+                  state: "open",
+                });
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing.number,
+                  body: `Reopened automatically: ${tag} still differs from the verified Herdr version ${verified}.`,
+                });
+                core.warning(`Reopened compatibility issue #${existing.number} for ${tag}.`);
+              } else {
+                core.info(`Open compatibility issue #${existing.number} for ${tag} already exists.`);
+              }
+              return;
+            }
+
+            const releaseUrl = upstream.data.html_url;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[upstream] Audit Herdr ${tag} compatibility`,
+              body: `${marker}\n` +
+                `A new stable Herdr release is available: [${tag}](${releaseUrl}).\n\n` +
+                `Signalbox is currently verified against **${verified}**.\n\n` +
+                `## Compatibility checklist\n\n` +
+                `- [ ] Review upstream release notes and socket/API changes\n` +
+                `- [ ] Compare \`api snapshot\`, \`workspace create\`, \`tab create\`, \`agent start\`, \`agent prompt\`, \`agent read\`, and \`agent attach\` contracts\n` +
+                `- [ ] Run \`make check\` with Herdr ${tag}\n` +
+                `- [ ] Run the real snapshot, preview, board, start, prompt, and attach smoke tests\n` +
+                `- [ ] Update the verified version in health checks, README, \`docs/upstream-herdr.md\`, and this workflow\n` +
+                `- [ ] Record any migration or compatibility shim in \`docs/upstream-herdr.md\`\n`,
+            });
