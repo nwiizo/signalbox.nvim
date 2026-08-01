@@ -54,16 +54,22 @@ h.test("board renders grouped agents in attention order with local mappings", fu
   h.contains(lines[5], "idle")
   h.eq(4, vim.api.nvim_win_get_cursor(0)[1])
   h.eq(false, vim.wo.wrap)
-  h.eq(40, vim.api.nvim_win_get_config(0).zindex)
+  h.eq(25, vim.api.nvim_win_get_config(0).zindex)
   h.truthy(vim.api.nvim_win_get_width(0) >= 36)
   local preview_found = false
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_get_buf(win) == board._preview_buffer() then
       preview_found = true
-      h.eq(40, vim.api.nvim_win_get_config(win).zindex)
+      h.eq(25, vim.api.nvim_win_get_config(win).zindex)
     end
   end
   h.truthy(preview_found)
+  h.truthy(vim.fn.maparg("<Tab>", "n", false, true).buffer == 1)
+  vim.api.nvim_buf_call(board._preview_buffer(), function()
+    for _, key in ipairs({ "<CR>", "i", "p", "s", "a", "g", "d", "v", "A", "r", "q", "?", "<Tab>" }) do
+      h.truthy(vim.fn.maparg(key, "n", false, true).buffer == 1, key .. " should be local to the preview")
+    end
+  end)
   for line, item in pairs(board._line_agents()) do
     h.truthy(vim.fn.strdisplaywidth(lines[line]) <= vim.api.nvim_win_get_width(0), item.terminal_id)
   end
@@ -88,6 +94,41 @@ h.test("board renders grouped agents in attention order with local mappings", fu
     return mapping.lhs == "<CR>"
   end, vim.api.nvim_get_keymap("n"))
   h.eq({}, global_enter)
+  board._reset()
+end)
+
+h.test("empty preview is labeled read-only before an agent is selected", function()
+  reset()
+  state._accept({ agents = {}, workspaces = { { workspace_id = "w1", label = "one" } } })
+  board.setup()
+  board.open()
+  local preview_window = vim.fn.win_findbuf(board._preview_buffer())[1]
+  local title = vim.api.nvim_win_get_config(preview_window).title
+  local chunks = {}
+  for _, chunk in ipairs(title) do
+    table.insert(chunks, chunk[1])
+  end
+  h.contains(table.concat(chunks), "read-only")
+  h.contains(table.concat(chunks), "select agent")
+  board._reset()
+end)
+
+h.test("preview identifies itself as read-only and offers an attach action", function()
+  reset()
+  state._accept({ agents = { agent("work", "working") }, workspaces = { { workspace_id = "w1", label = "one" } } })
+  board.setup()
+  board.open()
+  h.truthy(vim.wait(1000, function()
+    return vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, -1, false)[1] == "preview"
+  end))
+  local preview_window = vim.fn.win_findbuf(board._preview_buffer())[1]
+  local title = vim.api.nvim_win_get_config(preview_window).title
+  local chunks = {}
+  for _, chunk in ipairs(title) do
+    table.insert(chunks, chunk[1])
+  end
+  h.contains(table.concat(chunks), "read-only")
+  h.contains(table.concat(chunks), "i attach")
   board._reset()
 end)
 
@@ -182,6 +223,88 @@ h.test("closing either board window tears down the complete float", function()
   board._reset()
 end)
 
+h.test("resizing under an external float preserves board windows and focus", function()
+  reset()
+  state._accept({ agents = { agent("work", "working") }, workspaces = { { workspace_id = "w1", label = "one" } } })
+  board.setup()
+  board.open()
+  local list_window = vim.api.nvim_get_current_win()
+  local preview_window = vim.fn.win_findbuf(board._preview_buffer())[1]
+  local before = vim.api.nvim_win_get_config(list_window)
+  local old_columns = vim.o.columns
+  local old_lines = vim.o.lines
+  local modal_buffer = vim.api.nvim_create_buf(false, true)
+  local modal_window = vim.api.nvim_open_win(modal_buffer, true, {
+    relative = "editor",
+    row = 0,
+    col = 0,
+    width = 20,
+    height = 3,
+    style = "minimal",
+    zindex = 50,
+  })
+  vim.o.columns = old_columns + 20
+  vim.o.lines = old_lines + 4
+  vim.api.nvim_exec_autocmds("VimResized", {})
+  local focus_preserved = modal_window == vim.api.nvim_get_current_win()
+  local list_preserved = list_window == vim.fn.win_findbuf(board._buffer())[1]
+  local preview_preserved = preview_window == vim.fn.win_findbuf(board._preview_buffer())[1]
+  local list_config = vim.api.nvim_win_get_config(list_window)
+  local preview_config = vim.api.nvim_win_get_config(preview_window)
+  vim.o.columns = old_columns
+  vim.o.lines = old_lines
+  vim.api.nvim_win_close(modal_window, true)
+  local returned_to_board = list_window == vim.api.nvim_get_current_win()
+  vim.api.nvim_buf_delete(modal_buffer, { force = true })
+  board._reset()
+  h.truthy(focus_preserved)
+  h.truthy(list_preserved)
+  h.truthy(preview_preserved)
+  h.truthy(before.width ~= list_config.width or before.height ~= list_config.height)
+  h.truthy(list_config.border ~= nil)
+  h.truthy(preview_config.border ~= nil)
+  h.truthy(list_config.title ~= nil)
+  h.truthy(preview_config.title ~= nil)
+  h.eq(25, list_config.zindex)
+  h.eq(25, preview_config.zindex)
+  h.truthy(returned_to_board)
+end)
+
+h.test("toggling preview keeps focus on the list and drops the preview window", function()
+  reset()
+  state._accept({ agents = { agent("work", "working") }, workspaces = { { workspace_id = "w1", label = "one" } } })
+  board.setup()
+  board.open()
+  vim.fn.maparg("v", "n", false, true).callback()
+  local focused_buffer = vim.api.nvim_win_get_buf(0)
+  local list_zindex = vim.api.nvim_win_get_config(0).zindex
+  local preview_windows = vim.fn.win_findbuf(board._preview_buffer())
+  local list_buffer = board._buffer()
+  board._reset()
+  h.eq(list_buffer, focused_buffer)
+  h.eq(25, list_zindex)
+  h.eq({}, preview_windows)
+end)
+
+h.test("resizing without a preview preserves the list window", function()
+  reset()
+  state._accept({ agents = { agent("work", "working") }, workspaces = { { workspace_id = "w1", label = "one" } } })
+  board.setup()
+  board.open()
+  vim.fn.maparg("v", "n", false, true).callback()
+  local list_window = vim.api.nvim_get_current_win()
+  local before = vim.api.nvim_win_get_config(list_window)
+  local old_columns = vim.o.columns
+  vim.o.columns = old_columns + 20
+  vim.api.nvim_exec_autocmds("VimResized", {})
+  local after = vim.api.nvim_win_get_config(list_window)
+  vim.o.columns = old_columns
+  h.eq(list_window, vim.fn.win_findbuf(board._buffer())[1])
+  h.truthy(before.width ~= after.width)
+  h.eq({}, vim.fn.win_findbuf(board._preview_buffer()))
+  board._reset()
+end)
+
 h.test("terminal uses argv, explicit takeover, and reuses a live buffer", function()
   reset()
   local calls = {}
@@ -193,12 +316,15 @@ h.test("terminal uses argv, explicit takeover, and reuses a live buffer", functi
   local first = terminal.attach(target)
   local second = terminal.attach(target)
   h.eq(first, second)
+  h.truthy(terminal.is_attached("term_1"))
   h.eq(1, #calls)
   h.eq({ "herdr", "agent", "attach", "pane-term_1" }, calls[1])
   vim.api.nvim_buf_delete(first, { force = true })
+  h.eq(false, terminal.is_attached("term_1"))
 
   local third = terminal.attach(target, { takeover = true })
   h.truthy(third ~= nil)
+  h.truthy(terminal.is_attached("term_1"))
   h.eq({ "herdr", "agent", "attach", "pane-term_1", "--takeover" }, calls[2])
   terminal._reset()
 end)
@@ -226,5 +352,35 @@ h.test("terminal cleanup stops attach clients without closing Herdr agents", fun
     h.truthy(not vim.tbl_contains(command, "close"))
     h.truthy(not vim.tbl_contains(command, "stop"))
   end
+  terminal._reset()
+end)
+
+h.test("attached terminals use a Neovim-owned chord to detach and return to the board", function()
+  reset()
+  state._accept({ agents = { agent("term_1", "idle") }, workspaces = { { workspace_id = "w1", label = "one" } } })
+  terminal._set_termopen(function(_, _)
+    return 23
+  end)
+  local bufnr = terminal.attach(agent("term_1", "idle"), {})
+  local normal_mapping
+  local terminal_mapping
+  local normal_leader_mapping
+  local terminal_leader_mapping
+  vim.api.nvim_buf_call(bufnr, function()
+    normal_mapping = vim.fn.maparg("<C-\\>s", "n", false, true)
+    terminal_mapping = vim.fn.maparg("<C-\\>s", "t", false, true)
+    normal_leader_mapping = vim.fn.maparg("<leader>as", "n", false, true)
+    terminal_leader_mapping = vim.fn.maparg("<leader>as", "t", false, true)
+  end)
+  h.truthy(normal_mapping.buffer == 1)
+  h.truthy(terminal_mapping.buffer == 1)
+  h.eq({}, normal_leader_mapping)
+  h.eq({}, terminal_leader_mapping)
+  terminal_mapping.callback()
+  h.truthy(vim.wait(1000, function()
+    return not vim.api.nvim_buf_is_valid(bufnr) and board.is_open()
+  end))
+  h.eq(false, terminal.is_attached("term_1"))
+  board._reset()
   terminal._reset()
 end)

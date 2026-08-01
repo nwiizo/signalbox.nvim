@@ -15,6 +15,18 @@ local function notify_error(err)
   vim.notify(message(err), vim.log.levels.ERROR, { title = "Signalbox" })
 end
 
+local function valid_instruction(text)
+  if type(text) ~= "string" then
+    notify_error("instruction must be a string")
+    return false
+  end
+  if #text > require("signalbox.config").get().context.max_bytes then
+    notify_error("instruction exceeds context.max_bytes")
+    return false
+  end
+  return true
+end
+
 local function ensure_setup()
   if not initialized then
     M.setup()
@@ -167,27 +179,80 @@ function M.start(kind, opts)
       return
     end
     local context = require("signalbox.context")
+    local client = require("signalbox.client")
     local cwd = opts.cwd or context.project_root(0)
     local project = vim.fn.fnamemodify(cwd, ":t")
-    local default_name = string.format("%s-%s", selected_kind, project ~= "" and project or "agent")
+    local default_name = client.default_agent_name(selected_kind, project ~= "" and project or "agent")
     vim.ui.input({ prompt = "Agent name: ", default = opts.name or default_name }, function(name)
       if not name or name == "" then
         return
       end
-      with_server(function()
-        require("signalbox.client").start_agent(selected_kind, name, cwd, function(_, err)
-          if err then
-            notify_error(err)
-            return
-          end
-          vim.notify(
-            string.format("started %s agent %s", selected_kind, name),
-            vim.log.levels.INFO,
-            { title = "Signalbox" }
-          )
-          require("signalbox.state").refresh({ explicit = true })
+      local _, name_err = client.validate_agent_name(name)
+      if name_err then
+        notify_error(name_err)
+        return
+      end
+
+      local function launch(instruction)
+        if instruction == nil then
+          return
+        end
+        if not valid_instruction(instruction) then
+          return
+        end
+        with_server(function()
+          client.start_agent(selected_kind, name, cwd, function(_, err, allocation, started_agent)
+            if err then
+              notify_error(err)
+              return
+            end
+
+            local function attach_started_agent()
+              if not started_agent then
+                vim.notify(
+                  "agent started, but Herdr did not return its terminal identity; refresh Signalbox to attach",
+                  vim.log.levels.WARN,
+                  { title = "Signalbox" }
+                )
+                require("signalbox.state").refresh({ explicit = true })
+                return
+              end
+              local board = require("signalbox.board")
+              if board.is_open() then
+                board.close()
+              end
+              require("signalbox.terminal").attach(started_agent)
+              vim.notify(
+                string.format("started %s agent %s", selected_kind, name),
+                vim.log.levels.INFO,
+                { title = "Signalbox" }
+              )
+              require("signalbox.state").refresh({ explicit = true })
+            end
+
+            if instruction == "" then
+              attach_started_agent()
+              return
+            end
+            client.prompt(
+              started_agent and started_agent.target or allocation.pane_id,
+              instruction,
+              function(_, prompt_err)
+                if prompt_err then
+                  notify_error(prompt_err)
+                end
+                attach_started_agent()
+              end
+            )
+          end)
         end)
-      end)
+      end
+
+      if opts.instruction ~= nil then
+        launch(opts.instruction)
+      else
+        vim.ui.input({ prompt = "Initial instruction (empty to skip, cancel to abort): " }, launch)
+      end
     end)
   end)
 end
@@ -209,8 +274,7 @@ local function prompt_agent(agent, text)
   if not text or text == "" then
     return
   end
-  if #text > require("signalbox.config").get().context.max_bytes then
-    notify_error("instruction exceeds context.max_bytes")
+  if not valid_instruction(text) then
     return
   end
   with_server(function()

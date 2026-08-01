@@ -53,6 +53,7 @@ With lazy.nvim or LazyVim:
 ```lua
 {
   "nwiizo/signalbox.nvim",
+  event = "VeryLazy",
   cmd = {
     "Signalbox",
     "SignalboxRefresh",
@@ -65,20 +66,21 @@ With lazy.nvim or LazyVim:
     "SignalboxHealth",
   },
   keys = {
-    { "<leader>as", "<cmd>Signalbox<cr>", desc = "Agent Signalbox" },
+    { "<C-\\>s", "<cmd>Signalbox<cr>", mode = { "n", "t" }, desc = "Agent Signalbox" },
   },
   opts = {},
 }
 ```
 
-`<leader>as` is only a recommendation. Signalbox defines no global mappings itself.
+`<C-\>s` is only a recommendation. Signalbox defines no global mappings itself.
+`event = "VeryLazy"` starts background monitoring before the board is first opened; commands and keys can still load it earlier. With the default `auto_start_server = true`, it may also start the detached Herdr server on Neovim launch. Omit the event if you want Signalbox and Herdr to start only on demand and do not need ambient notifications.
 
 ## Workflow
 
 Open the board with `:Signalbox`.
 
 ```text
-╭──────── Signalbox  !1  ✓1 ────────╮ ╭──────── reviewer · recent output ────────╮
+╭──────── Signalbox  !1  ✓1 ────────╮ ╭──────── reviewer · read-only ────────────╮
 │ this project + attention elsewhere │ │ ...                                      │
 │                                    │ │ The agent is waiting for approval to     │
 │ signalbox.nvim                     │ │ update the public API.                   │
@@ -90,35 +92,40 @@ Open the board with `:Signalbox`.
 
 Board mappings are buffer-local:
 
-| Key | Action |
-| --- | --- |
-| `<CR>` | Attach to the selected agent |
-| `p` / `s` | Prompt the selected agent |
-| `a` | Start Codex or Claude Code at the captured project root |
-| `g` | Open Snacks Lazygit at the selected agent's repository |
-| `d` | Open Diffview at the selected agent's repository |
-| `v` | Toggle recent-output preview |
-| `A` | Toggle default attention view / all agents |
-| `r` | Refresh immediately |
-| `q` | Close |
-| `?` | Toggle help |
+| Key          | Action                                                                                        |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| `<CR>` / `i` | Leave the read-only preview and attach to the selected agent's interactive terminal           |
+| `p` / `s`    | Prompt the selected agent                                                                     |
+| `a`          | Name an agent, enter its first instruction, start it at the captured project root, and attach |
+| `g`          | Open Snacks Lazygit at the selected agent's repository                                        |
+| `d`          | Open Diffview at the selected agent's repository                                              |
+| `v`          | Toggle recent-output preview                                                                  |
+| `A`          | Toggle default attention view / all agents                                                    |
+| `r`          | Refresh immediately                                                                           |
+| `q`          | Close                                                                                         |
+| `?`          | Toggle help                                                                                   |
+| `<Tab>`      | Move between the agent list and read-only preview                                             |
 
 The default view keeps agents from the current Git/Jujutsu root and also surfaces blocked or completed work elsewhere. `A` reveals the whole Herdr session.
 
+The right pane is deliberately a read-only, ephemeral view of recent output. Its title says `read-only`; press `i` or `<CR>` from either pane to replace the board with an interactive Herdr terminal in insert mode.
+
+Use `<C-\>s` (`Ctrl-\`, then `s`) as the single Signalbox key. In a normal editor buffer it opens the board and starts Herdr on demand; in a Signalbox-attached terminal it detaches the Neovim client, leaves the Herdr agent running, and returns directly to the board. The `Ctrl-\` prefix is owned by Neovim's terminal-mode, so Codex and Claude Code cannot consume it as prompt input. The terminal chord is configurable with `terminal.return_key`.
+
 ## Commands
 
-| Command | Description |
-| --- | --- |
-| `:Signalbox` | Toggle the attention board |
-| `:SignalboxRefresh` | Refresh Herdr state immediately |
-| `:SignalboxStart [codex\|claude]` | Start a named persistent agent at the project root |
-| `:SignalboxAttach[!] [target]` | Attach; `!` explicitly takes over another direct client |
-| `:SignalboxPrompt [target]` | Prompt an agent |
-| `:[range]SignalboxPrompt [target]` | Prompt with complete lines from a range |
-| `:'<,'>SignalboxSendVisual [target]` | Prompt with the exact visual selection |
-| `:SignalboxSendFile [target]` | Send the saved current-file reference |
-| `:SignalboxSendDiagnostics [target]` | Send current-buffer LSP diagnostics |
-| `:SignalboxHealth` | Run `:checkhealth signalbox` |
+| Command                              | Description                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------ |
+| `:Signalbox`                         | Toggle the attention board                                                           |
+| `:SignalboxRefresh`                  | Refresh Herdr state immediately                                                      |
+| `:SignalboxStart [codex\|claude]`    | Name an agent, enter its first instruction, start it at the project root, and attach |
+| `:SignalboxAttach[!] [target]`       | Attach; `!` explicitly takes over another direct client                              |
+| `:SignalboxPrompt [target]`          | Prompt an agent                                                                      |
+| `:[range]SignalboxPrompt [target]`   | Prompt with complete lines from a range                                              |
+| `:'<,'>SignalboxSendVisual [target]` | Prompt with the exact visual selection                                               |
+| `:SignalboxSendFile [target]`        | Send the saved current-file reference                                                |
+| `:SignalboxSendDiagnostics [target]` | Send current-buffer LSP diagnostics                                                  |
+| `:SignalboxHealth`                   | Run `:checkhealth signalbox`                                                         |
 
 Targets accept stable terminal IDs, current pane IDs, or an unambiguous agent name.
 
@@ -132,6 +139,12 @@ require("signalbox").statusline()
 ```
 
 It can be used from Incline, lualine, or another renderer after Signalbox is loaded. `~` marks last-known data after a refresh failure.
+
+## Notifications
+
+Signalbox observes Herdr's semantic agent state and sends a Neovim notification once when an agent changes to `blocked` or `done`. It does not forward Herdr's own toast. The initial snapshot stays quiet, while `statusline()` and the board still expose existing attention.
+
+Notifications are suppressed while the board is open or the matching live attached terminal is focused because the state is already visible. Closing that surface alone does not replay the event; if the agent leaves the attention state and later returns, the new transition can notify normally. An already delivered notification stays deduplicated for the same Herdr revision. Herdr's `[ui.toast]` delivery is configured independently; enabling both a Herdr desktop/terminal toast and Signalbox notifications intentionally produces two notification surfaces.
 
 ## Configuration
 
@@ -164,6 +177,7 @@ require("signalbox").setup({
     side = "right",
     width = 0.4,
     auto_insert = true,
+    return_key = "<C-\\>s",
   },
 })
 ```

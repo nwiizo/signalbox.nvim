@@ -20,8 +20,8 @@ local closing_windows = false
 local origin_root
 local augroup
 local namespace = vim.api.nvim_create_namespace("signalbox-board")
--- Leave the default modal layer (50) available to vim.ui.select/input providers.
-local board_zindex = 40
+-- Stay below Snacks layout 30, picker preview 40, and the default modal layer 50.
+local board_zindex = 25
 
 local highlight_for = {
   blocked = "SignalboxBlocked",
@@ -41,6 +41,10 @@ end
 
 function M.is_open()
   return valid_window(list_window)
+end
+
+function M.is_visible()
+  return M.is_open() and vim.api.nvim_win_get_tabpage(list_window) == vim.api.nvim_get_current_tabpage()
 end
 
 local function dimension(value, total, minimum)
@@ -158,8 +162,12 @@ end
 local function preview_title(agent, suffix_group)
   return {
     { " " .. agent.name .. " ", highlight_for[agent.status] },
-    { "· recent output ", suffix_group or "SignalboxMuted" },
+    { "· read-only · i attach ", suffix_group or "SignalboxMuted" },
   }
+end
+
+local function empty_preview_title()
+  return { { " read-only · select agent · i attach ", "SignalboxMuted" } }
 end
 
 function M.refresh_preview(opts)
@@ -176,8 +184,10 @@ function M.refresh_preview(opts)
       preview_message({
         "Select an agent to inspect its recent output.",
         "",
-        "The preview is ephemeral and is never written to disk.",
+        "This preview is read-only. Press i or <CR> to attach and type.",
+        "Its contents are ephemeral and are never written to disk.",
       })
+      set_title(preview_window, empty_preview_title())
     end
     return
   end
@@ -284,9 +294,10 @@ function M.render()
     local first_help_line = #lines + 2
     vim.list_extend(lines, {
       "",
-      "<CR> attach   p prompt   a start",
+      "<CR>/i attach p prompt   a start",
       "g lazygit    d diff      v preview",
-      "A all/view   r refresh   q close   ? help",
+      "A all/view   r refresh   q close   ? help   Tab panes",
+      "attached terminal: " .. config.get().terminal.return_key .. " returns here",
     })
     for line = first_help_line, #lines do
       highlights[line] = "SignalboxHelp"
@@ -340,6 +351,21 @@ local function require_agent_row()
   return agent
 end
 
+local function attach_selected()
+  local agent = require_agent_row()
+  if agent then
+    M.close()
+    require("signalbox").attach(agent.terminal_id)
+  end
+end
+
+local function prompt_selected()
+  local agent = require_agent_row()
+  if agent then
+    require("signalbox").prompt(agent.terminal_id)
+  end
+end
+
 local function configure_list_buffer()
   vim.bo[list_buffer].buftype = "nofile"
   vim.bo[list_buffer].bufhidden = "hide"
@@ -349,25 +375,10 @@ local function configure_list_buffer()
   vim.bo[list_buffer].buflisted = false
   pcall(vim.api.nvim_buf_set_name, list_buffer, "signalbox://board")
 
-  map("<CR>", function()
-    local agent = require_agent_row()
-    if agent then
-      M.close()
-      require("signalbox").attach(agent.terminal_id)
-    end
-  end, "Attach to agent")
-  map("p", function()
-    local agent = require_agent_row()
-    if agent then
-      require("signalbox").prompt(agent.terminal_id)
-    end
-  end, "Prompt agent")
-  map("s", function()
-    local agent = require_agent_row()
-    if agent then
-      require("signalbox").prompt(agent.terminal_id)
-    end
-  end, "Prompt agent")
+  map("<CR>", attach_selected, "Attach to agent")
+  map("i", attach_selected, "Attach and type in agent")
+  map("p", prompt_selected, "Prompt agent")
+  map("s", prompt_selected, "Prompt agent")
   map("a", function()
     require("signalbox").start(nil, { cwd = origin_root })
   end, "Start agent")
@@ -397,6 +408,11 @@ local function configure_list_buffer()
     help_visible = not help_visible
     M.render()
   end, "Toggle help")
+  map("<Tab>", function()
+    if valid_window(preview_window) then
+      vim.api.nvim_set_current_win(preview_window)
+    end
+  end, "Focus read-only preview")
 
   vim.api.nvim_create_autocmd("CursorMoved", {
     buffer = list_buffer,
@@ -414,6 +430,45 @@ local function configure_preview_buffer()
   vim.bo[preview_buffer].filetype = "signalbox-preview"
   vim.bo[preview_buffer].buflisted = false
   pcall(vim.api.nvim_buf_set_name, preview_buffer, "signalbox://preview")
+  local opts = { buffer = preview_buffer, silent = true, nowait = true }
+  vim.keymap.set("n", "<CR>", attach_selected, vim.tbl_extend("force", opts, { desc = "Attach to agent" }))
+  vim.keymap.set("n", "i", attach_selected, vim.tbl_extend("force", opts, { desc = "Attach and type in agent" }))
+  vim.keymap.set("n", "p", prompt_selected, vim.tbl_extend("force", opts, { desc = "Prompt agent" }))
+  vim.keymap.set("n", "s", prompt_selected, vim.tbl_extend("force", opts, { desc = "Prompt agent" }))
+  vim.keymap.set("n", "a", function()
+    require("signalbox").start(nil, { cwd = origin_root })
+  end, vim.tbl_extend("force", opts, { desc = "Start agent" }))
+  vim.keymap.set("n", "g", function()
+    local agent = selected_agent()
+    M.close()
+    require("signalbox.actions").lazygit(agent, origin_root)
+  end, vim.tbl_extend("force", opts, { desc = "Open Lazygit" }))
+  vim.keymap.set("n", "d", function()
+    local agent = selected_agent()
+    M.close()
+    require("signalbox.actions").diffview(agent, origin_root)
+  end, vim.tbl_extend("force", opts, { desc = "Open Diffview" }))
+  vim.keymap.set("n", "v", function()
+    preview_enabled = not preview_enabled
+    M._reopen_windows()
+  end, vim.tbl_extend("force", opts, { desc = "Toggle preview" }))
+  vim.keymap.set("n", "A", function()
+    show_all = not show_all
+    M.render()
+  end, vim.tbl_extend("force", opts, { desc = "Toggle all agents" }))
+  vim.keymap.set("n", "r", function()
+    require("signalbox").refresh()
+  end, vim.tbl_extend("force", opts, { desc = "Refresh agents" }))
+  vim.keymap.set("n", "q", M.close, vim.tbl_extend("force", opts, { desc = "Close Signalbox" }))
+  vim.keymap.set("n", "?", function()
+    help_visible = not help_visible
+    M.render()
+  end, vim.tbl_extend("force", opts, { desc = "Toggle help" }))
+  vim.keymap.set("n", "<Tab>", function()
+    if valid_window(list_window) then
+      vim.api.nvim_set_current_win(list_window)
+    end
+  end, vim.tbl_extend("force", opts, { desc = "Focus agent list" }))
 end
 
 local function open_windows()
@@ -449,7 +504,7 @@ local function open_windows()
       height = layout.height,
       style = "minimal",
       border = "rounded",
-      title = { { " recent output ", "SignalboxMuted" } },
+      title = empty_preview_title(),
       title_pos = "center",
       zindex = board_zindex,
     })
@@ -481,6 +536,30 @@ function M._reopen_windows()
   preview_target = nil
   open_windows()
   closing_windows = false
+  M.render()
+end
+
+function M._resize_windows()
+  if not M.is_open() then
+    return
+  end
+  local layout = geometry()
+  vim.api.nvim_win_set_config(list_window, {
+    relative = "editor",
+    row = layout.row,
+    col = layout.col,
+    width = layout.list_width,
+    height = layout.height,
+  })
+  if valid_window(preview_window) then
+    vim.api.nvim_win_set_config(preview_window, {
+      relative = "editor",
+      row = layout.row,
+      col = layout.preview_col,
+      width = layout.preview_width,
+      height = layout.height,
+    })
+  end
   M.render()
 end
 
@@ -563,7 +642,7 @@ function M.setup()
     group = augroup,
     callback = function()
       if M.is_open() then
-        M._reopen_windows()
+        M._resize_windows()
       end
     end,
   })

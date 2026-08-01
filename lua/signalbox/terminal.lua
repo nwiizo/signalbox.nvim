@@ -34,6 +34,29 @@ local function focus_buffer(bufnr)
   return window
 end
 
+local function install_return_mapping(bufnr)
+  local function return_to_board()
+    local window = vim.api.nvim_get_current_win()
+    if vim.api.nvim_win_get_buf(window) == bufnr and #vim.api.nvim_tabpage_list_wins(0) > 1 then
+      vim.api.nvim_win_close(window, true)
+    end
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      vim.api.nvim_buf_delete(bufnr, { force = true })
+    end
+    vim.schedule(function()
+      require("signalbox.board").open()
+    end)
+  end
+  local opts = {
+    buffer = bufnr,
+    silent = true,
+    nowait = true,
+    desc = "Return to Signalbox",
+  }
+  vim.keymap.set("t", config.get().terminal.return_key, return_to_board, opts)
+  vim.keymap.set("n", config.get().terminal.return_key, return_to_board, opts)
+end
+
 function M.attach(agent, opts)
   opts = opts or {}
   local existing = terminals[agent.terminal_id]
@@ -49,6 +72,7 @@ function M.attach(agent, opts)
   vim.bo[bufnr].bufhidden = "wipe"
   vim.bo[bufnr].swapfile = false
   vim.b[bufnr].signalbox_terminal_id = agent.terminal_id
+  install_return_mapping(bufnr)
   local job_id, attach_err = client.attach(agent.target or agent.pane_id, opts.takeover == true, {
     on_exit = function(_, code)
       vim.schedule(function()
@@ -113,6 +137,14 @@ function M.cleanup()
     end
   end
   terminals = {}
+end
+
+function M.is_attached(terminal_id, bufnr)
+  local record = terminals[terminal_id]
+  if record == nil or not vim.api.nvim_buf_is_valid(record.bufnr) then
+    return false
+  end
+  return bufnr == nil or record.bufnr == bufnr
 end
 
 function M._set_termopen(value)

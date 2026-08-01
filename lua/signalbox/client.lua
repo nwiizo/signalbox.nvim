@@ -17,9 +17,34 @@ local defer = vim.defer_fn
 local server_ready = false
 local server_checking = false
 local server_waiters = {}
+local agent_shell_retry_ms = { 100, 300, 1000 }
 
 local function trim(value)
-  return (value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  return ((value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local agent_name_error = table.concat({
+  "agent name must start with a lowercase letter and contain only lowercase letters,",
+  "digits, '-' or '_' (1-32 characters)",
+}, " ")
+
+function M.validate_agent_name(name)
+  if type(name) ~= "string" or #name > 32 or not name:match("^[a-z][a-z0-9_-]*$") then
+    return nil, { kind = "validation", message = agent_name_error }
+  end
+  return name
+end
+
+function M.default_agent_name(kind, project)
+  local candidate = string.format("%s-%s", tostring(kind or "agent"), tostring(project or "agent")):lower()
+  candidate = candidate:gsub("[^a-z0-9_-]+", "-"):gsub("^[-_0-9]+", ""):gsub("[-_]+$", "")
+  if candidate == "" then
+    candidate = "agent"
+  elseif not candidate:match("^[a-z]") then
+    candidate = "agent-" .. candidate
+  end
+  candidate = candidate:sub(1, 32):gsub("[-_]+$", "")
+  return candidate ~= "" and candidate or "agent"
 end
 
 local function default_runner(command, opts, callback)
@@ -50,6 +75,15 @@ local function executable_argv(args)
 end
 
 local function process_error(result, command)
+  local json_ok, decoded = pcall(vim.json.decode, trim(result.stdout))
+  if json_ok and type(decoded) == "table" and type(decoded.error) == "table" then
+    return {
+      kind = "process",
+      code = result.code,
+      api_code = decoded.error.code,
+      message = decoded.error.message or decoded.error.code or "Herdr API error",
+    }
+  end
   local detail = trim(result.stderr)
   if detail == "" then
     detail = trim(result.stdout)
@@ -156,7 +190,8 @@ local function normalize_agent(agent, index)
   end
 
   local status = valid_status[agent.agent_status] and agent.agent_status or "unknown"
-  local name = nullable(agent.name) or nullable(agent.display_agent) or nullable(agent.agent) or terminal_id
+  local registered_name = nullable(agent.name)
+  local name = registered_name or nullable(agent.display_agent) or nullable(agent.agent) or terminal_id
   local kind = nullable(agent.agent) or nullable(agent.display_agent) or "agent"
   local title = nullable(agent.title) or nullable(agent.terminal_title_stripped) or nullable(agent.terminal_title) or ""
 
@@ -169,6 +204,7 @@ local function normalize_agent(agent, index)
     focused = agent.focused == true,
     revision = type(agent.revision) == "number" and agent.revision or 0,
     name = tostring(name),
+    registered_name = type(registered_name) == "string" and registered_name or nil,
     kind = tostring(kind),
     title = tostring(title),
     cwd = nullable(agent.foreground_cwd) or nullable(agent.cwd),
@@ -284,6 +320,15 @@ local function create_agent_pane(cwd, label, callback)
       callback(nil, snapshot_err)
       return
     end
+    for _, agent in ipairs(snapshot.agents or {}) do
+      if agent.registered_name == label then
+        callback(nil, {
+          kind = "validation",
+          message = string.format("agent name %q is already in use; attach to it or choose another name", label),
+        })
+        return
+      end
+    end
     local workspace_id = workspace_for_cwd(snapshot, cwd)
     local args
     local resource_kind
@@ -320,6 +365,11 @@ function M.start_agent(kind, name, cwd, callback)
     callback(nil, { kind = "config", message = "unknown agent kind: " .. tostring(kind) })
     return
   end
+  local _, name_err = M.validate_agent_name(name)
+  if name_err then
+    callback(nil, name_err)
+    return
+  end
   create_agent_pane(cwd, name, function(allocation, pane_err)
     if pane_err then
       callback(nil, pane_err)
@@ -341,21 +391,36 @@ function M.start_agent(kind, name, cwd, callback)
       table.insert(args, "--")
       vim.list_extend(args, preset.args)
     end
-    run_json(args, { timeout_ms = start_timeout + 5000 }, function(result, err)
-      if err then
-        err.recovery = allocation
-        err.message = string.format(
-          "%s; Herdr kept the new %s%s at pane %s for inspection",
-          err.message,
-          allocation.resource_kind,
-          allocation.resource_id and " " .. allocation.resource_id or "",
-          allocation.pane_id
-        )
-        callback(nil, err)
-        return
-      end
-      callback(result)
-    end)
+    local retry_index = 1
+    local function start_in_allocated_pane()
+      run_json(args, { timeout_ms = start_timeout + 5000 }, function(result, err)
+        local retryable = err and (err.code == "agent_pane_busy" or err.api_code == "agent_pane_busy")
+        if retryable and retry_index <= #agent_shell_retry_ms then
+          local delay = agent_shell_retry_ms[retry_index]
+          retry_index = retry_index + 1
+          defer(start_in_allocated_pane, delay)
+          return
+        end
+        if err then
+          err.recovery = allocation
+          err.message = string.format(
+            "%s; Herdr kept the new %s%s at pane %s for inspection",
+            err.message,
+            allocation.resource_kind,
+            allocation.resource_id and " " .. allocation.resource_id or "",
+            allocation.pane_id
+          )
+          callback(nil, err)
+          return
+        end
+        local started_agent
+        if type(result.agent) == "table" then
+          started_agent = normalize_agent(result.agent, 1)
+        end
+        callback(result, nil, allocation, started_agent)
+      end)
+    end
+    start_in_allocated_pane()
   end)
 end
 

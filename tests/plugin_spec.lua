@@ -178,6 +178,118 @@ h.test("agent command targets use stable IDs and reject ambiguous names", functi
   h.contains(err, "ambiguous")
 end)
 
+h.test("starting an agent collects an initial instruction and attaches its live terminal", function()
+  local signalbox = require("signalbox")
+  local state = require("signalbox.state")
+  local client = require("signalbox.client")
+  local terminal = require("signalbox.terminal")
+  local board = require("signalbox.board")
+  local config = require("signalbox.config")
+  signalbox._reset()
+  state._reset()
+  client._reset()
+  config._reset()
+
+  local originals = {
+    state_start = state.start,
+    state_stop = state.stop,
+    state_refresh = state.refresh,
+    ensure_server = client.ensure_server,
+    start_agent = client.start_agent,
+    prompt = client.prompt,
+    attach = terminal.attach,
+    board_is_open = board.is_open,
+    board_close = board.close,
+    input = vim.ui.input,
+    notify = vim.notify,
+  }
+  local prompts = {}
+  local started
+  local prompted
+  local attached
+  local board_closed = false
+  local refreshes = 0
+  state.start = function() end
+  state.stop = function() end
+  state.refresh = function()
+    refreshes = refreshes + 1
+  end
+  client.ensure_server = function(callback)
+    callback(true)
+  end
+  client.start_agent = function(kind, name, cwd, callback)
+    started = { kind = kind, name = name, cwd = cwd }
+    callback({ type = "agent_started" }, nil, { pane_id = "w1:p2" }, agent("term_2", name, "idle"))
+  end
+  client.prompt = function(target, instruction, callback)
+    prompted = { target = target, instruction = instruction }
+    callback({ type = "agent_prompted" })
+  end
+  terminal.attach = function(value)
+    attached = value
+    return 12
+  end
+  board.is_open = function()
+    return true
+  end
+  board.close = function()
+    board_closed = true
+  end
+  vim.ui.input = function(opts, callback)
+    table.insert(prompts, opts)
+    callback(opts.prompt == "Agent name: " and opts.default or "review the current diff")
+  end
+  vim.notify = function() end
+
+  signalbox.setup()
+  signalbox.start("codex", { cwd = "/tmp/signalbox.nvim" })
+  h.eq("codex-signalbox-nvim", prompts[1].default)
+  h.eq("Initial instruction (empty to skip, cancel to abort): ", prompts[2].prompt)
+  h.eq({ kind = "codex", name = "codex-signalbox-nvim", cwd = "/tmp/signalbox.nvim" }, started)
+  h.eq({ target = "term_2:pane", instruction = "review the current diff" }, prompted)
+  h.eq("term_2", attached.terminal_id)
+  h.truthy(board_closed)
+  h.eq(1, refreshes)
+
+  started = nil
+  signalbox.start("codex", {
+    cwd = "/tmp/signalbox.nvim",
+    name = "oversized-instruction",
+    instruction = string.rep("x", 65537),
+  })
+  h.eq(nil, started)
+
+  board_closed = false
+  attached = nil
+  client.start_agent = function(_, _, _, callback)
+    callback({ type = "agent_started" }, nil, { pane_id = "w1:p3" }, nil)
+  end
+  signalbox.start("codex", {
+    cwd = "/tmp/signalbox.nvim",
+    name = "missing-identity",
+    instruction = "",
+  })
+  h.eq(false, board_closed)
+  h.eq(nil, attached)
+  h.eq(2, refreshes)
+
+  state.start = originals.state_start
+  state.stop = originals.state_stop
+  state.refresh = originals.state_refresh
+  client.ensure_server = originals.ensure_server
+  client.start_agent = originals.start_agent
+  client.prompt = originals.prompt
+  terminal.attach = originals.attach
+  board.is_open = originals.board_is_open
+  board.close = originals.board_close
+  vim.ui.input = originals.input
+  vim.notify = originals.notify
+  signalbox._reset()
+  state._reset()
+  client._reset()
+  config._reset()
+end)
+
 h.test("statusline is healthy, stale, and empty when Herdr is missing", function()
   local signalbox = require("signalbox")
   local state = require("signalbox.state")

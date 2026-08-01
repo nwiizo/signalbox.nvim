@@ -32,6 +32,7 @@ local defaults = {
     side = "right",
     width = 0.4,
     auto_insert = true,
+    return_key = "<C-\\>s",
   },
   notifications = {
     blocked = true,
@@ -153,6 +154,7 @@ local function validate(config)
   if type(config.terminal.auto_insert) ~= "boolean" then
     fail("terminal.auto_insert", "a boolean")
   end
+  validate_string(config.terminal.return_key, "terminal.return_key")
 
   if type(config.notifications) ~= "table" then
     fail("notifications", "a table")
