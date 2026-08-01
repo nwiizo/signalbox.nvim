@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Neovim ${{ matrix.neovim }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        neovim:
+          - v0.10.4
+          - stable
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Lua
+        uses: leafo/gh-actions-lua@6919171ccf181b826f44b9bca76307b577217377 # v13
+        with:
+          luaVersion: "5.1.5"
+
+      - name: Set up LuaRocks
+        uses: leafo/gh-actions-luarocks@35d062def313a7699a0d513e996bcf4352f05389 # v6
+
+      - name: Install Luacheck
+        run: luarocks install luacheck 1.2.0-1
+
+      - name: Set up StyLua
+        uses: JohnnyMorganz/stylua-action@76fd70c03e6340ceaf673366712db9b20560b402 # v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: 2.5.2
+          args: false
+
+      - name: Set up Neovim
+        uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7 # v1
+        with:
+          neovim: true
+          version: ${{ matrix.neovim }}
+
+      - name: Check
+        run: make check
