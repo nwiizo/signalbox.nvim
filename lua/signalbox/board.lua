@@ -264,6 +264,7 @@ local function help_lines(width)
       "<CR>/i attach",
       "p/s prompt",
       "a start",
+      "R resume",
       "n rename",
       "e explain",
       "v preview",
@@ -280,6 +281,7 @@ local function help_lines(width)
     lines = {
       "<CR>/i attach   p/s prompt",
       "a start         n rename",
+      "R resume session",
       "e explain       v preview",
       "g lazygit       d diff",
       "A all/view      r refresh",
@@ -443,6 +445,9 @@ local function configure_list_buffer()
   map("a", function()
     require("signalbox").start(nil, { cwd = origin_root })
   end, "Start agent")
+  map("R", function()
+    require("signalbox").resume(nil, { cwd = origin_root })
+  end, "Resume conversation in Herdr")
   map("g", function()
     local agent = selected_agent()
     M.close()
@@ -506,6 +511,9 @@ local function configure_preview_buffer()
   vim.keymap.set("n", "a", function()
     require("signalbox").start(nil, { cwd = origin_root })
   end, vim.tbl_extend("force", opts, { desc = "Start agent" }))
+  vim.keymap.set("n", "R", function()
+    require("signalbox").resume(nil, { cwd = origin_root })
+  end, vim.tbl_extend("force", opts, { desc = "Resume conversation in Herdr" }))
   vim.keymap.set("n", "g", function()
     local agent = selected_agent()
     M.close()

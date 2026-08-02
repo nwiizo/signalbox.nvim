@@ -66,7 +66,7 @@ h.test("board renders grouped agents in attention order with local mappings", fu
   h.truthy(preview_found)
   h.truthy(vim.fn.maparg("<Tab>", "n", false, true).buffer == 1)
   vim.api.nvim_buf_call(board._preview_buffer(), function()
-    for _, key in ipairs({ "<CR>", "i", "p", "s", "n", "e", "a", "g", "d", "v", "A", "r", "q", "?", "<Tab>" }) do
+    for _, key in ipairs({ "<CR>", "i", "p", "s", "n", "e", "a", "R", "g", "d", "v", "A", "r", "q", "?", "<Tab>" }) do
       h.truthy(vim.fn.maparg(key, "n", false, true).buffer == 1, key .. " should be local to the preview")
     end
   end)

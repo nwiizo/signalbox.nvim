@@ -381,9 +381,8 @@ local function create_agent_pane(cwd, label, callback)
   end)
 end
 
-function M.start_agent(kind, name, cwd, callback)
-  local preset = config.get().agents[kind]
-  if not preset then
+local function launch_agent(kind, name, cwd, agent_args, callback)
+  if not config.get().agents[kind] then
     callback(nil, { kind = "config", message = "unknown agent kind: " .. tostring(kind) })
     return
   end
@@ -409,9 +408,9 @@ function M.start_agent(kind, name, cwd, callback)
       "--timeout",
       tostring(start_timeout),
     }
-    if #(preset.args or {}) > 0 then
+    if #agent_args > 0 then
       table.insert(args, "--")
-      vim.list_extend(args, preset.args)
+      vim.list_extend(args, agent_args)
     end
     local retry_index = 1
     local function start_in_allocated_pane()
@@ -444,6 +443,26 @@ function M.start_agent(kind, name, cwd, callback)
     end
     start_in_allocated_pane()
   end)
+end
+
+function M.start_agent(kind, name, cwd, callback)
+  local preset = config.get().agents[kind]
+  launch_agent(kind, name, cwd, vim.deepcopy((preset and preset.args) or {}), callback)
+end
+
+function M.resume_agent(kind, name, cwd, callback)
+  local resume_args = {
+    claude = { "--resume" },
+    codex = { "resume" },
+  }
+  if not resume_args[kind] then
+    callback(nil, { kind = "config", message = "resume is not supported for agent kind: " .. tostring(kind) })
+    return
+  end
+  local preset = config.get().agents[kind]
+  local agent_args = vim.deepcopy((preset and preset.args) or {})
+  vim.list_extend(agent_args, resume_args[kind])
+  launch_agent(kind, name, cwd, agent_args, callback)
 end
 
 function M.prompt(target, text, callback)

@@ -21,6 +21,16 @@ end, {
   desc = "Start a persistent coding agent through Herdr",
 })
 
+vim.api.nvim_create_user_command("SignalboxResume", function(args)
+  require("signalbox").resume(args.args ~= "" and args.args or nil)
+end, {
+  nargs = "?",
+  complete = function()
+    return require("signalbox")._complete_agent_kinds()
+  end,
+  desc = "Resume a saved coding-agent conversation through Herdr",
+})
+
 vim.api.nvim_create_user_command("SignalboxAttach", function(args)
   require("signalbox").attach(args.args ~= "" and args.args or nil, { takeover = args.bang })
 end, {

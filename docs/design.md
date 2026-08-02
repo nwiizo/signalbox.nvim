@@ -8,6 +8,10 @@ The core functional job is:
 
 The emotional job is to feel in control without watching every agent. The social job is to make concurrent delegation legible and reviewable rather than magical.
 
+An adjacent continuity job appears when work started in an ordinary terminal:
+
+> When I realize an existing conversation needs persistence and attention monitoring, help me resume that exact saved conversation inside Herdr without copying its transcript or guessing which session I meant.
+
 The closest conceptual model is a railway signal box. A signal box observes shared traffic, makes exceptions conspicuous, and lets an operator route or halt movement. It does not become the locomotive. In the same way, Signalbox must not recreate Herdr's process supervisor or the coding agents' interfaces.
 
 ## Progress forces
@@ -39,7 +43,7 @@ Signalbox stores no transcript and no duplicate session database. `terminal_id` 
 2. Show current-project agents plus blocked/done work elsewhere.
 3. Sort agent rows by blocked, done, working, idle, unknown.
 4. Read only the selected agent's recent unwrapped terminal output.
-5. Let the operator explain a surprising state, rename a role, attach, prompt, start, inspect Git, or open a diff.
+5. Let the operator explain a surprising state, rename a role, attach, prompt, start, resume an exact saved conversation, inspect Git, or open a diff.
 6. Preserve Herdr state when the board or Neovim closes.
 
 ## Milestones

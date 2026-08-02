@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/signalbox.png" alt="Signalbox: Neovim routing a herd of terminal agents" width="180">
+</p>
+
 # signalbox.nvim
 
 `signalbox.nvim` is an attention-first Neovim control surface for persistent coding agents managed by [Herdr](https://herdr.dev/).
@@ -28,6 +32,7 @@ That job shapes the product:
 - Stable role names for agents discovered outside Signalbox
 - Notifications when an agent becomes blocked or completes work
 - Herdr 0.7.5 workspace/tab creation and persistent Codex/Claude launches
+- Conversation rehoming through the native Claude Code and Codex resume pickers
 - Direct attach in a native right-hand Neovim terminal
 - Prompt, file, visual selection, range, and LSP diagnostic context
 - Optional `Snacks.lazygit` and Diffview actions from the selected agent's cwd
@@ -60,6 +65,7 @@ With lazy.nvim or LazyVim:
     "Signalbox",
     "SignalboxRefresh",
     "SignalboxStart",
+    "SignalboxResume",
     "SignalboxAttach",
     "SignalboxPrompt",
     "SignalboxRename",
@@ -102,6 +108,7 @@ Board mappings are buffer-local:
 | `e`          | Toggle recent output / Herdr state-detection explanation                                      |
 | `n`          | Give the selected agent a stable role name                                                    |
 | `a`          | Accept or edit an unused suggested name, enter the first instruction, start, and attach       |
+| `R`          | Resume a saved Claude Code or Codex conversation inside a new Herdr-managed agent              |
 | `g`          | Open Snacks Lazygit at the selected agent's repository                                        |
 | `d`          | Open Diffview at the selected agent's repository                                              |
 | `v`          | Toggle recent-output preview                                                                  |
@@ -124,6 +131,7 @@ Use `<C-g>` (`Ctrl-g`) as the single Signalbox key. In a normal editor buffer it
 | `:Signalbox`                         | Toggle the attention board                                                           |
 | `:SignalboxRefresh`                  | Refresh Herdr state immediately                                                      |
 | `:SignalboxStart [codex\|claude]`    | Accept or edit an unused suggested name, enter the first instruction, start, and attach |
+| `:SignalboxResume [codex\|claude]`   | Open the provider's resume picker inside Herdr and attach                            |
 | `:SignalboxAttach[!] [target]`       | Attach; `!` explicitly takes over another direct client                              |
 | `:SignalboxPrompt [target]`          | Prompt an agent                                                                      |
 | `:SignalboxRename [target]`          | Give an agent a stable role name                                                     |
@@ -134,6 +142,12 @@ Use `<C-g>` (`Ctrl-g`) as the single Signalbox key. In a normal editor buffer it
 | `:SignalboxHealth`                   | Run `:checkhealth signalbox`                                                         |
 
 Targets accept stable terminal IDs, current pane IDs, or an unambiguous agent name.
+
+## Rehome an existing conversation
+
+Use `R` on the board or `:SignalboxResume codex` / `:SignalboxResume claude` when a conversation that started outside Herdr should become persistent and observable. Exit the original Codex or Claude Code client first. Signalbox never kills it or attempts to move its live process.
+
+After confirmation, Signalbox creates a Herdr-managed pane, opens the provider's native resume picker, and attaches immediately. Select the exact saved conversation there; Signalbox deliberately does not choose the latest session because multiple conversations may share one repository. Current Herdr integrations then report the native session identity so Herdr can restore that conversation after a server restart.
 
 `:checkhealth signalbox` reads Herdr's active detection-manifest status without changing it. A missing check time or one older than seven days is a warning with the explicit `herdr server update-agent-manifests` recovery command; local overrides are reported separately because they intentionally shadow remote rules.
 
@@ -204,6 +218,7 @@ agents = {
 - Context larger than the configured line or byte limit is rejected.
 - File references reject unnamed and modified buffers.
 - Closing Neovim stops only local attach clients, never Herdr agents or its server.
+- Resume rehomes saved conversation state, not a running process; stop the original client before selecting its session.
 - Signalbox currently refreshes snapshots on a short adaptive poll. Herdr socket events are the next transport milestone.
 - Agent-to-Neovim MCP tools and native diff review are deliberately out of scope for v0.1.
 - Windows is not supported in v0.1.

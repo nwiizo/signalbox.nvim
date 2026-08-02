@@ -371,6 +371,72 @@ h.test("client creates a workspace when no pane belongs to the project", functio
   }, calls[3])
 end)
 
+h.test("client starts provider resume pickers after configured global arguments", function()
+  reset()
+  config.setup({
+    agents = {
+      codex = { args = { "--profile", "work" } },
+      claude = { args = { "--model", "sonnet" } },
+    },
+  })
+  local calls = {}
+  client._set_runner(function(argv, _, callback)
+    table.insert(calls, vim.deepcopy(argv))
+    local result
+    if argv[2] == "api" then
+      local snapshot = raw_snapshot(raw_agent())
+      snapshot.snapshot.panes = {}
+      snapshot.snapshot.agents = {}
+      result = snapshot
+    elseif argv[2] == "workspace" then
+      result = { type = "workspace_created", root_pane = { pane_id = "w2:p1" } }
+    else
+      result = { type = "agent_started" }
+    end
+    callback({ code = 0, stdout = vim.json.encode({ id = "1", result = result }), stderr = "" })
+  end)
+
+  client.resume_agent("claude", "claude-worker", "/claude-repo", function(result)
+    h.eq("agent_started", result.type)
+  end)
+  client.resume_agent("codex", "codex-worker", "/codex-repo", function(result)
+    h.eq("agent_started", result.type)
+  end)
+
+  h.eq({
+    "herdr",
+    "agent",
+    "start",
+    "claude-worker",
+    "--kind",
+    "claude",
+    "--pane",
+    "w2:p1",
+    "--timeout",
+    "30000",
+    "--",
+    "--model",
+    "sonnet",
+    "--resume",
+  }, calls[3])
+  h.eq({
+    "herdr",
+    "agent",
+    "start",
+    "codex-worker",
+    "--kind",
+    "codex",
+    "--pane",
+    "w2:p1",
+    "--timeout",
+    "30000",
+    "--",
+    "--profile",
+    "work",
+    "resume",
+  }, calls[6])
+end)
+
 h.test("client reports the retained pane when agent startup fails", function()
   reset()
   config.setup()

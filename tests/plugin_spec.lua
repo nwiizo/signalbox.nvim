@@ -7,6 +7,7 @@ h.test("plugin registers the approved user commands", function()
     "Signalbox",
     "SignalboxRefresh",
     "SignalboxStart",
+    "SignalboxResume",
     "SignalboxAttach",
     "SignalboxPrompt",
     "SignalboxRename",
@@ -519,6 +520,121 @@ h.test("starting an agent collects an initial instruction and attaches its live 
   state._reset()
   client._reset()
   config._reset()
+end)
+
+h.test("resuming an agent confirms handoff and attaches directly to its picker", function()
+  local signalbox = require("signalbox")
+  local state = require("signalbox.state")
+  local client = require("signalbox.client")
+  local terminal = require("signalbox.terminal")
+  local board = require("signalbox.board")
+  local config = require("signalbox.config")
+  signalbox._reset()
+  state._reset()
+  client._reset()
+  config._reset()
+
+  local originals = {
+    state_start = state.start,
+    state_stop = state.stop,
+    state_refresh = state.refresh,
+    ensure_server = client.ensure_server,
+    snapshot = client.snapshot,
+    resume_agent = client.resume_agent,
+    attach = terminal.attach,
+    board_is_open = board.is_open,
+    board_close = board.close,
+    input = vim.ui.input,
+    select = vim.ui.select,
+    notify = vim.notify,
+  }
+  h.defer(function()
+    state.start = originals.state_start
+    state.stop = originals.state_stop
+    state.refresh = originals.state_refresh
+    client.ensure_server = originals.ensure_server
+    client.snapshot = originals.snapshot
+    client.resume_agent = originals.resume_agent
+    terminal.attach = originals.attach
+    board.is_open = originals.board_is_open
+    board.close = originals.board_close
+    vim.ui.input = originals.input
+    vim.ui.select = originals.select
+    vim.notify = originals.notify
+    signalbox._reset()
+    state._reset()
+    client._reset()
+    config._reset()
+  end)
+
+  local selections = {}
+  local inputs = {}
+  local resumed
+  local attached
+  local board_closed = false
+  local refreshes = 0
+  local notifications = {}
+  state.start = function() end
+  state.stop = function() end
+  state.refresh = function(...)
+    refreshes = refreshes + 1
+    return originals.state_refresh(...)
+  end
+  client.ensure_server = function(callback)
+    callback(true)
+  end
+  client.snapshot = function(callback)
+    callback({
+      agents = { agent("term_1", "codex-signalbox-nvim", "idle") },
+      workspaces = { { workspace_id = "w1", label = "signalbox.nvim" } },
+    })
+  end
+  client.resume_agent = function(kind, name, cwd, callback)
+    resumed = { kind = kind, name = name, cwd = cwd }
+    callback({ type = "agent_started" }, nil, { pane_id = "w1:p2" }, agent("term_2", name, "idle"))
+  end
+  terminal.attach = function(value)
+    attached = value
+    return 12
+  end
+  board.is_open = function()
+    return true
+  end
+  board.close = function()
+    board_closed = true
+  end
+  vim.ui.select = function(items, opts, callback)
+    table.insert(selections, { items = items, opts = opts })
+    callback("Continue")
+  end
+  vim.ui.input = function(opts, callback)
+    table.insert(inputs, opts)
+    callback(opts.default)
+  end
+  vim.notify = function(value)
+    table.insert(notifications, value)
+  end
+
+  signalbox.setup()
+  signalbox.resume("codex", { cwd = "/tmp/signalbox.nvim" })
+  h.contains(selections[1].opts.prompt, "Stop the existing codex client")
+  h.eq({ "Continue", "Cancel" }, selections[1].items)
+  h.eq(1, #inputs)
+  h.eq("codex-signalbox-nvim-2", inputs[1].default)
+  h.eq({ kind = "codex", name = "codex-signalbox-nvim-2", cwd = "/tmp/signalbox.nvim" }, resumed)
+  h.eq("term_2", attached.terminal_id)
+  h.truthy(board_closed)
+  h.eq(2, refreshes)
+  h.contains(table.concat(notifications, "\n"), "resume picker")
+
+  resumed = nil
+  attached = nil
+  vim.ui.select = function(_, _, callback)
+    callback("Cancel")
+  end
+  signalbox.resume("codex", { cwd = "/tmp/signalbox.nvim" })
+  h.eq(nil, resumed)
+  h.eq(nil, attached)
 end)
 
 h.test("statusline is healthy, stale, and empty when Herdr is missing", function()
