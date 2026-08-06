@@ -56,8 +56,8 @@ local function raw_snapshot(agent)
   return {
     type = "session_snapshot",
     snapshot = {
-      version = "0.7.5",
-      protocol = 17,
+      version = "0.8.0",
+      protocol = 19,
       agents = { agent },
       workspaces = { { workspace_id = "w1", label = "repo", focused = true, extra = "ignored" } },
       panes = { { pane_id = "w1:p1", workspace_id = "w1", cwd = "/repo" } },
@@ -298,7 +298,7 @@ h.test("client uses Herdr argv contracts for rename and detection explanation", 
     else
       callback({
         code = 0,
-        stdout = vim.json.encode({ id = "1", result = { type = "agent_renamed" } }),
+        stdout = vim.json.encode({ id = "1", result = { type = "agent_info", agent = raw_agent() } }),
         stderr = "",
       })
     end
@@ -309,10 +309,45 @@ h.test("client uses Herdr argv contracts for rename and detection explanation", 
   client.explain("w1:p1", function(output)
     explanation = output
   end)
-  h.eq("agent_renamed", renamed.type)
+  h.eq("agent_info", renamed.type)
   h.contains(explanation, "osc_title_idle")
   h.eq({ "herdr", "agent", "rename", "w1:p1", "reviewer" }, calls[1])
   h.eq({ "herdr", "agent", "explain", "w1:p1", "--format", "text" }, calls[2])
+end)
+
+h.test("client asks Herdr to confirm that an initial prompt started working", function()
+  reset()
+  config.setup()
+  local call
+  local call_opts
+  client._set_runner(function(argv, opts, callback)
+    call = vim.deepcopy(argv)
+    call_opts = vim.deepcopy(opts)
+    callback({
+      code = 0,
+      stdout = vim.json.encode({ id = "1", result = { type = "agent_prompted", agent = raw_agent() } }),
+      stderr = "",
+    })
+  end)
+
+  client.prompt_until_working("w1:p1", "review the diff", function(result, err)
+    h.eq(nil, err)
+    h.eq("agent_prompted", result.type)
+  end)
+
+  h.eq({
+    "herdr",
+    "agent",
+    "prompt",
+    "w1:p1",
+    "review the diff",
+    "--wait",
+    "--until",
+    "working",
+    "--timeout",
+    "6000",
+  }, call)
+  h.eq(8000, call_opts.timeout_ms)
 end)
 
 h.test("client rejects an invalid rename before invoking Herdr", function()
@@ -594,6 +629,38 @@ h.test("client reads preview output without JSON decoding", function()
     h.eq(nil, err)
     h.eq("plain output\n", result)
   end)
+end)
+
+h.test("client falls back to the visible screen when active agent history is unavailable", function()
+  reset()
+  config.setup()
+  local calls = {}
+  client._set_runner(function(argv, _, callback)
+    table.insert(calls, vim.deepcopy(argv))
+    if #calls == 1 then
+      callback({
+        code = 1,
+        stdout = "",
+        stderr = vim.json.encode({
+          id = "cli:agent:read",
+          error = { code = "agent_not_idle", message = "agent history requires an idle agent" },
+        }),
+      })
+    else
+      callback({ code = 0, stdout = "visible output\n", stderr = "" })
+    end
+  end)
+
+  client.read("w1:p1", 80, function(result, err)
+    h.eq(nil, err)
+    h.eq("visible output\n", result)
+  end)
+
+  h.eq(
+    { "herdr", "agent", "read", "w1:p1", "--source", "recent-unwrapped", "--lines", "80", "--format", "text" },
+    calls[1]
+  )
+  h.eq({ "herdr", "agent", "read", "w1:p1", "--source", "visible", "--format", "text" }, calls[2])
 end)
 
 h.test("client shares one bounded server start among concurrent callers", function()

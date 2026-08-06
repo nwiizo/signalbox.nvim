@@ -27,14 +27,16 @@ That job shapes the product:
 
 - 90% floating attention board, sized like a full-screen Lazygit workflow
 - Current project agents plus `blocked`/`done` agents elsewhere by default
+- A compact count of agents still working elsewhere, without crowding the attention queue
 - Ephemeral recent-output preview for the selected agent
 - One-key Herdr state explanation with matched detection rule and evidence
 - Stable role names for agents discovered outside Signalbox
 - Notifications when an agent becomes blocked or completes work
-- Herdr 0.7.5 workspace/tab creation and persistent Codex/Claude launches
+- Herdr 0.8.0-verified workspace/tab creation and persistent Codex/Claude launches
 - Conversation rehoming through the native Claude Code and Codex resume pickers
 - Direct attach in a native right-hand Neovim terminal
 - Prompt, file, visual selection, range, and LSP diagnostic context
+- Transient retry drafts when a provider update or setup screen intercepts the initial instruction
 - Optional `Snacks.lazygit` and Diffview actions from the selected agent's cwd
 - Compact attention-only status component and `:checkhealth signalbox`, including detection-manifest freshness
 - Pure Lua with no required Neovim plugin dependency
@@ -91,7 +93,7 @@ Open the board with `:Signalbox`.
 ```text
 ╭──────── Signalbox  !1  ✓1 ────────╮ ╭──────── reviewer · read-only ────────────╮
 │ this project + attention elsewhere │ │ ...                                      │
-│                                    │ │ The agent is waiting for approval to     │
+│ A: 2 working elsewhere             │ │ The agent is waiting for approval to     │
 │ signalbox.nvim                     │ │ update the public API.                   │
 │ ! reviewer       claude  blocked   │ │                                          │
 │ * implementation codex   working   │ │                                          │
@@ -104,7 +106,7 @@ Board mappings are buffer-local:
 | Key          | Action                                                                                        |
 | ------------ | --------------------------------------------------------------------------------------------- |
 | `<CR>` / `i` | Leave the read-only preview and attach to the selected agent's interactive terminal           |
-| `p` / `s`    | Prompt the selected agent                                                                     |
+| `p` / `s`    | Prompt the selected agent; retry a saved initial-instruction draft when one exists          |
 | `e`          | Toggle recent output / Herdr state-detection explanation                                      |
 | `n`          | Give the selected agent a stable role name                                                    |
 | `a`          | Accept or edit an unused suggested name, enter the first instruction, start, and attach       |
@@ -118,7 +120,9 @@ Board mappings are buffer-local:
 | `?`          | Toggle help                                                                                   |
 | `<Tab>`      | Move between the agent list and read-only preview                                             |
 
-The default view keeps agents from the current Git/Jujutsu root and also surfaces blocked or completed work elsewhere. `A` reveals the whole Herdr session.
+The default view keeps agents from the current Git root and also surfaces blocked or completed work elsewhere. When active work is filtered out, the second line shows `A: N working elsewhere`; press `A` to reveal the whole Herdr session.
+
+Codex or Claude Code may show an update, trust, hook, login, or other setup screen before it can accept an instruction. Signalbox asks Herdr to confirm that the initial prompt made the agent start working. If Herdr reports `agent_prompt_stalled`, Signalbox warns immediately and keeps the instruction in memory. Clear the provider screen, return with `<C-g>`, select the agent, and press `p`; the original instruction is already filled in, so Enter retries it. The draft is discarded once work begins and is never written to disk.
 
 The right pane is deliberately a read-only, ephemeral view of recent output. Its title says `read-only`; press `i` or `<CR>` from either pane to replace the board with an interactive Herdr terminal in insert mode.
 
@@ -219,13 +223,14 @@ agents = {
 - File references reject unnamed and modified buffers.
 - Closing Neovim stops only local attach clients, never Herdr agents or its server.
 - Resume rehomes saved conversation state, not a running process; stop the original client before selecting its session.
+- Current-project filtering uses the Git root. Outside a Git worktree, Signalbox matches the exact working directory.
 - Signalbox currently refreshes snapshots on a short adaptive poll. Herdr socket events are the next transport milestone.
 - Agent-to-Neovim MCP tools and native diff review are deliberately out of scope for v0.1.
 - Windows is not supported in v0.1.
 
 ## Herdr upgrade monitoring
 
-The repository checks the canonical `herdrdev/herdr` latest stable release daily. If it differs from the currently verified Herdr version, GitHub Actions opens a deduplicated compatibility-audit issue with CLI, schema, and real-agent smoke-test checkpoints. See [the upstream audit runbook](docs/upstream-herdr.md).
+The repository checks the canonical `herdrdev/herdr` latest stable release daily. If it differs from the currently verified Herdr version (currently 0.8.0), GitHub Actions opens a deduplicated compatibility-audit issue with CLI, schema, and real-agent smoke-test checkpoints. See [the upstream audit runbook](docs/upstream-herdr.md).
 
 See [the design notes](docs/design.md) for the job model and ownership boundary.
 

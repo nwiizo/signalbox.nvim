@@ -97,8 +97,15 @@ local function executable_argv(args)
 end
 
 local function process_error(result, command)
-  local json_ok, decoded = pcall(vim.json.decode, trim(result.stdout))
-  if json_ok and type(decoded) == "table" and type(decoded.error) == "table" then
+  local decoded
+  for _, output in ipairs({ result.stdout or "", result.stderr or "" }) do
+    local json_ok, candidate = pcall(vim.json.decode, trim(output))
+    if json_ok and type(candidate) == "table" and type(candidate.error) == "table" then
+      decoded = candidate
+      break
+    end
+  end
+  if decoded then
     return {
       kind = "process",
       code = result.code,
@@ -312,7 +319,7 @@ local function normalized_path(path)
 end
 
 local function project_path(path)
-  for _, marker in ipairs({ ".jj", ".git" }) do
+  for _, marker in ipairs({ ".git" }) do
     local ok, root = pcall(vim.fs.root, path, marker)
     if ok and root then
       return normalized_path(root)
@@ -469,6 +476,14 @@ function M.prompt(target, text, callback)
   run_json({ "agent", "prompt", target, text }, callback)
 end
 
+function M.prompt_until_working(target, text, callback)
+  run_json(
+    { "agent", "prompt", target, text, "--wait", "--until", "working", "--timeout", "6000" },
+    { timeout_ms = 8000 },
+    callback
+  )
+end
+
 function M.rename(target, name, callback)
   local _, name_err = M.validate_agent_name(name)
   if name_err then
@@ -489,15 +504,23 @@ function M.explain(target, callback)
 end
 
 function M.read(target, lines, callback)
+  local function finish(result, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+    callback(result.stdout or "")
+  end
+
   run(
     { "agent", "read", target, "--source", "recent-unwrapped", "--lines", tostring(lines), "--format", "text" },
     {},
     function(result, err)
-      if err then
-        callback(nil, err)
+      if err and (err.code == "agent_not_idle" or err.api_code == "agent_not_idle") then
+        run({ "agent", "read", target, "--source", "visible", "--format", "text" }, {}, finish)
         return
       end
-      callback(result.stdout or "")
+      finish(result, err)
     end
   )
 end

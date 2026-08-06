@@ -1,7 +1,7 @@
 local M = {}
 
 M.minimum_herdr = { 0, 7, 5 }
-M.verified_herdr = { 0, 7, 5 }
+M.verified_herdr = { 0, 8, 0 }
 
 local function format(version)
   return table.concat(version, ".")

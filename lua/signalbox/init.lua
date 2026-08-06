@@ -3,6 +3,7 @@ local M = {}
 local initialized = false
 local cleanup_group
 local lifecycle_generation = 0
+local pending_instructions = {}
 
 local function message(err)
   if type(err) == "table" then
@@ -13,6 +14,22 @@ end
 
 local function notify_error(err)
   vim.notify(message(err), vim.log.levels.ERROR, { title = "Signalbox" })
+end
+
+local function has_api_code(err, code)
+  return type(err) == "table" and (err.code == code or err.api_code == code)
+end
+
+local function notify_prompt_stalled(agent)
+  vim.notify(
+    string.format(
+      "Herdr did not observe %s start the instruction; clear any provider setup screen, "
+        .. "return to Signalbox, and press p to retry the saved draft",
+      agent.name
+    ),
+    vim.log.levels.WARN,
+    { title = "Signalbox" }
+  )
 end
 
 local function valid_instruction(text)
@@ -165,6 +182,7 @@ function M.setup(opts)
   require("signalbox.client").mark_server_unavailable()
   require("signalbox.board").setup()
   require("signalbox.notifier")._reset()
+  pending_instructions = {}
   initialized = true
 
   cleanup_group = vim.api.nvim_create_augroup("SignalboxCleanup", { clear = true })
@@ -173,6 +191,17 @@ function M.setup(opts)
     callback = function()
       require("signalbox.state").stop()
       require("signalbox.terminal").cleanup()
+    end,
+  })
+  vim.api.nvim_create_autocmd("User", {
+    group = cleanup_group,
+    pattern = "SignalboxUpdated",
+    callback = function()
+      for _, agent in ipairs(require("signalbox.state").agents()) do
+        if agent.status == "working" then
+          pending_instructions[agent.terminal_id] = nil
+        end
+      end
     end,
   })
   vim.schedule(function()
@@ -253,12 +282,19 @@ function M.start(kind, opts)
               attach_started_agent()
               return
             end
-            client.prompt(
+            client.prompt_until_working(
               started_agent and started_agent.target or allocation.pane_id,
               instruction,
               function(_, prompt_err)
                 if prompt_err then
-                  notify_error(prompt_err)
+                  if has_api_code(prompt_err, "agent_prompt_stalled") and started_agent then
+                    pending_instructions[started_agent.terminal_id] = instruction
+                    notify_prompt_stalled(started_agent)
+                  else
+                    notify_error(prompt_err)
+                  end
+                elseif started_agent then
+                  pending_instructions[started_agent.terminal_id] = nil
                 end
                 attach_started_agent()
               end
@@ -393,18 +429,30 @@ function M.rename(target)
   end)
 end
 
-local function prompt_agent(agent, text)
+local function prompt_agent(agent, text, recovery)
   if not text or text == "" then
     return
   end
   if not valid_instruction(text) then
     return
   end
+  if recovery then
+    pending_instructions[agent.terminal_id] = text
+  end
   with_server(function()
-    require("signalbox.client").prompt(agent.target, text, function(_, err)
+    local client = require("signalbox.client")
+    local send = recovery and client.prompt_until_working or client.prompt
+    send(agent.target, text, function(_, err)
       if err then
-        notify_error(err)
+        if recovery and has_api_code(err, "agent_prompt_stalled") then
+          notify_prompt_stalled(agent)
+        else
+          notify_error(err)
+        end
         return
+      end
+      if recovery then
+        pending_instructions[agent.terminal_id] = nil
       end
       vim.notify("prompted " .. agent.name, vim.log.levels.INFO, { title = "Signalbox" })
     end)
@@ -443,8 +491,11 @@ function M.prompt(target, text)
     prompt_text(target, text)
     return
   end
-  vim.ui.input({ prompt = "Instruction: " }, function(input)
-    prompt_text(target, input)
+  with_target(target, function(agent)
+    local recovery = pending_instructions[agent.terminal_id] ~= nil
+    vim.ui.input({ prompt = "Instruction: ", default = pending_instructions[agent.terminal_id] }, function(input)
+      prompt_agent(agent, input, recovery)
+    end)
   end)
 end
 
@@ -527,6 +578,10 @@ function M._complete_agent_kinds()
   return configured_agent_kinds()
 end
 
+function M._pending_instruction(terminal_id)
+  return pending_instructions[terminal_id]
+end
+
 function M._reset()
   lifecycle_generation = lifecycle_generation + 1
   initialized = false
@@ -534,6 +589,7 @@ function M._reset()
     pcall(vim.api.nvim_del_augroup_by_id, cleanup_group)
   end
   cleanup_group = nil
+  pending_instructions = {}
 end
 
 return M

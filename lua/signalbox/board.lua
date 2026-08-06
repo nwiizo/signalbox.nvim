@@ -323,6 +323,24 @@ function M.render()
       table.insert(lines, "")
     end
     local groups = state.grouped_agents({ root = origin_root, all = show_all })
+    if not show_all then
+      local visible = {}
+      for _, group in ipairs(groups) do
+        for _, agent in ipairs(group.agents) do
+          visible[agent.terminal_id] = true
+        end
+      end
+      local hidden_working = 0
+      for _, agent in ipairs(state.agents()) do
+        if agent.status == "working" and not visible[agent.terminal_id] then
+          hidden_working = hidden_working + 1
+        end
+      end
+      if hidden_working > 0 then
+        lines[2] = truncate(string.format(" A: %d working elsewhere", hidden_working), width - 1)
+        highlights[2] = "SignalboxWorking"
+      end
+    end
     if #groups == 0 then
       table.insert(lines, "No matching agents. Press a to start one.")
     end

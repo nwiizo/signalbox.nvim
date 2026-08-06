@@ -233,7 +233,7 @@ h.test("rename prompts with the current role and refreshes after Herdr accepts i
   end
   client.rename = function(target, name, callback)
     renamed = { target = target, name = name }
-    callback({ type = "agent_renamed" })
+    callback({ type = "agent_info" })
   end
   vim.ui.input = function(opts, callback)
     h.eq("worker", opts.default)
@@ -421,6 +421,7 @@ h.test("starting an agent collects an initial instruction and attaches its live 
     snapshot = client.snapshot,
     start_agent = client.start_agent,
     prompt = client.prompt,
+    prompt_until_working = client.prompt_until_working,
     attach = terminal.attach,
     board_is_open = board.is_open,
     board_close = board.close,
@@ -433,6 +434,7 @@ h.test("starting an agent collects an initial instruction and attaches its live 
   local attached
   local board_closed = false
   local refreshes = 0
+  local notifications = {}
   state.start = function() end
   state.stop = function() end
   state.refresh = function(...)
@@ -452,7 +454,7 @@ h.test("starting an agent collects an initial instruction and attaches its live 
     started = { kind = kind, name = name, cwd = cwd }
     callback({ type = "agent_started" }, nil, { pane_id = "w1:p2" }, agent("term_2", name, "idle"))
   end
-  client.prompt = function(target, instruction, callback)
+  client.prompt_until_working = function(target, instruction, callback)
     prompted = { target = target, instruction = instruction }
     callback({ type = "agent_prompted" })
   end
@@ -470,7 +472,9 @@ h.test("starting an agent collects an initial instruction and attaches its live 
     table.insert(prompts, opts)
     callback(opts.prompt == "Agent name: " and opts.default or "review the current diff")
   end
-  vim.notify = function() end
+  vim.notify = function(message)
+    table.insert(notifications, message)
+  end
 
   signalbox.setup()
   signalbox.start("codex", { cwd = "/tmp/signalbox.nvim" })
@@ -481,6 +485,86 @@ h.test("starting an agent collects an initial instruction and attaches its live 
   h.eq("term_2", attached.terminal_id)
   h.truthy(board_closed)
   h.eq(2, refreshes)
+  h.eq(nil, signalbox._pending_instruction("term_2"))
+
+  client.start_agent = function(kind, name, cwd, callback)
+    started = { kind = kind, name = name, cwd = cwd }
+    callback({ type = "agent_started" }, nil, { pane_id = "w1:p3" }, agent("term_3", name, "idle"))
+  end
+  client.prompt_until_working = function(_, _, callback)
+    callback(nil, {
+      kind = "api",
+      code = "agent_prompt_stalled",
+      message = "agent did not start working after prompt submission",
+    })
+  end
+  signalbox.start("codex", {
+    cwd = "/tmp/signalbox.nvim",
+    name = "stalled-instruction",
+    instruction = "retry this instruction",
+  })
+  h.eq("retry this instruction", signalbox._pending_instruction("term_3"))
+  h.contains(table.concat(notifications, "\n"), "press p to retry the saved draft")
+
+  state._accept({
+    agents = {
+      agent("term_1", "codex-signalbox-nvim", "idle"),
+      agent("term_3", "stalled-instruction", "idle"),
+    },
+    workspaces = { { workspace_id = "w1", label = "signalbox.nvim" } },
+  })
+  local retry_defaults = {}
+  vim.ui.input = function(opts, callback)
+    if opts.prompt == "Instruction: " then
+      table.insert(retry_defaults, opts.default == nil and vim.NIL or opts.default)
+    end
+    callback(nil)
+  end
+  signalbox.prompt("term_3")
+  h.eq("retry this instruction", retry_defaults[1])
+
+  local retry_prompted
+  client.prompt_until_working = function(target, instruction, callback)
+    retry_prompted = { target = target, instruction = instruction }
+    callback({ type = "agent_prompted" })
+  end
+  vim.ui.input = function(opts, callback)
+    if opts.prompt == "Instruction: " then
+      table.insert(retry_defaults, opts.default == nil and vim.NIL or opts.default)
+    end
+    callback(opts.default)
+  end
+  signalbox.prompt("term_3")
+  h.eq({ target = "term_3:pane", instruction = "retry this instruction" }, retry_prompted)
+  h.eq(nil, signalbox._pending_instruction("term_3"))
+
+  client.prompt_until_working = function(_, _, callback)
+    callback(nil, {
+      kind = "process",
+      api_code = "agent_prompt_stalled",
+      message = "agent did not start working after prompt submission",
+    })
+  end
+  signalbox.start("codex", {
+    cwd = "/tmp/signalbox.nvim",
+    name = "stalled-instruction",
+    instruction = "retry this instruction",
+  })
+  h.eq("retry this instruction", signalbox._pending_instruction("term_3"))
+
+  state._accept({
+    agents = {
+      agent("term_1", "codex-signalbox-nvim", "idle"),
+      agent("term_3", "stalled-instruction", "working"),
+    },
+    workspaces = { { workspace_id = "w1", label = "signalbox.nvim" } },
+  })
+  h.eq(nil, signalbox._pending_instruction("term_3"))
+  signalbox.prompt("term_3")
+  h.eq(vim.NIL, retry_defaults[3])
+  vim.ui.input = function(opts, callback)
+    callback(opts.default)
+  end
 
   started = nil
   signalbox.start("codex", {
@@ -502,7 +586,7 @@ h.test("starting an agent collects an initial instruction and attaches its live 
   })
   h.eq(false, board_closed)
   h.eq(nil, attached)
-  h.eq(3, refreshes)
+  h.eq(5, refreshes)
 
   state.start = originals.state_start
   state.stop = originals.state_stop
@@ -511,6 +595,7 @@ h.test("starting an agent collects an initial instruction and attaches its live 
   client.snapshot = originals.snapshot
   client.start_agent = originals.start_agent
   client.prompt = originals.prompt
+  client.prompt_until_working = originals.prompt_until_working
   terminal.attach = originals.attach
   board.is_open = originals.board_is_open
   board.close = originals.board_close

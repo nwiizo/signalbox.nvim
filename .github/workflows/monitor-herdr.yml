@@ -21,7 +21,7 @@ jobs:
       - name: Compare latest Herdr release with verified version
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
-          VERIFIED_HERDR_VERSION: 0.7.5
+          VERIFIED_HERDR_VERSION: 0.8.0
         with:
           script: |
             const upstream = await github.rest.repos.getLatestRelease({
@@ -77,9 +77,9 @@ jobs:
                 `Signalbox is currently verified against **${verified}**.\n\n` +
                 `## Compatibility checklist\n\n` +
                 `- [ ] Review upstream release notes and socket/API changes\n` +
-                `- [ ] Compare \`api snapshot\`, lifecycle commands, \`agent explain\`, \`agent rename\`, and \`server agent-manifests\` contracts\n` +
+                `- [ ] Compare \`api snapshot\`, \`agent prompt --wait\`, agent read sources, \`agent explain\`, \`agent rename\`, and \`server agent-manifests\` contracts\n` +
                 `- [ ] Run \`make check\` with Herdr ${tag}\n` +
-                `- [ ] Run the real snapshot, preview/explain, rename, board, start, prompt, attach, and manifest-health smoke tests\n` +
+                `- [ ] Run the real snapshot, idle/active preview, explain, rename, board, start, prompt-stall recovery, attach, manifest-health, and cleanup smoke tests\n` +
                 `- [ ] Update the verified version in \`lua/signalbox/compatibility.lua\`, README, \`docs/upstream-herdr.md\`, and this workflow\n` +
                 `- [ ] Record any migration or compatibility shim in \`docs/upstream-herdr.md\`\n`,
             });

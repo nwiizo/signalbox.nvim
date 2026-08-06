@@ -20,7 +20,7 @@ local function buffer_path(bufnr)
 end
 
 function M.project_root(bufnr)
-  for _, marker in ipairs({ ".jj", ".git" }) do
+  for _, marker in ipairs({ ".git" }) do
     local ok, root = pcall(vim.fs.root, bufnr, marker)
     if ok and root and root ~= "" then
       return vim.fs.normalize(root)

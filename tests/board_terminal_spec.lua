@@ -41,7 +41,11 @@ end
 h.test("board renders grouped agents in attention order with local mappings", function()
   reset()
   state._accept({
-    agents = { agent("idle", "idle"), agent("blocked", "blocked"), agent("work", "working", "w2") },
+    agents = {
+      agent("idle", "idle"),
+      agent("blocked", "blocked"),
+      agent("work", "working", "w2", "/other-project"),
+    },
     workspaces = { { workspace_id = "w1", label = "one" }, { workspace_id = "w2", label = "two" } },
   })
   board.setup()
@@ -49,6 +53,7 @@ h.test("board renders grouped agents in attention order with local mappings", fu
   local bufnr = board._buffer()
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   h.contains(lines[1], "this project")
+  h.contains(lines[2], "A: 1 working elsewhere")
   h.eq("one", lines[3])
   h.contains(lines[4], "blocked")
   h.contains(lines[5], "idle")

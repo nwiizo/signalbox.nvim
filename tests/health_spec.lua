@@ -60,7 +60,7 @@ h.test("health reports missing and stale Herdr manifest check times", function()
   h.eq(60, health._manifest_check_age(status, { remote_last_checked_unix = 200 }, 260))
 end)
 
-h.test("health pins the Herdr 0.7.5 manifest status and update argv", function()
+h.test("health pins the current Herdr manifest status and update argv", function()
   h.eq({ "herdr", "server", "agent-manifests", "--json" }, health._manifest_status_argv("herdr"))
   h.eq({ "herdr", "server", "update-agent-manifests" }, health._manifest_update_argv("herdr"))
 end)
