@@ -6,6 +6,7 @@ h.test("plugin registers the approved user commands", function()
   for _, command in ipairs({
     "Signalbox",
     "SignalboxRefresh",
+    "SignalboxUpdateAll",
     "SignalboxStart",
     "SignalboxResume",
     "SignalboxAttach",
@@ -22,6 +23,123 @@ h.test("plugin registers the approved user commands", function()
   h.eq(true, commands.SignalboxAttach.bang)
   h.truthy(commands.SignalboxPrompt.range ~= nil)
   h.truthy(commands.SignalboxSendVisual.range ~= nil)
+end)
+
+h.test("update-all command dispatches explicit Herdr maintenance", function()
+  local signalbox = require("signalbox")
+  local original_update_all = signalbox.update_all
+  local calls = 0
+  signalbox.update_all = function()
+    calls = calls + 1
+  end
+  vim.cmd("SignalboxUpdateAll")
+  signalbox.update_all = original_update_all
+  h.eq(1, calls)
+end)
+
+h.test("update-all maintains configured integrations and refreshes agent state", function()
+  local signalbox = require("signalbox")
+  local client = require("signalbox.client")
+  local config = require("signalbox.config")
+  local state = require("signalbox.state")
+  signalbox._reset()
+  client._reset()
+  config._reset()
+  state._reset()
+
+  local original_update_all = client.update_all
+  local original_start = state.start
+  local original_stop = state.stop
+  local original_refresh = state.refresh
+  local original_notify = vim.notify
+  h.defer(function()
+    client.update_all = original_update_all
+    state.start = original_start
+    state.stop = original_stop
+    state.refresh = original_refresh
+    vim.notify = original_notify
+    signalbox._reset()
+    client._reset()
+    config._reset()
+    state._reset()
+  end)
+
+  local maintained
+  local refreshes = 0
+  local notifications = {}
+  state.start = function() end
+  state.stop = function() end
+  state.refresh = function(opts, callback)
+    h.eq(true, opts.explicit)
+    refreshes = refreshes + 1
+    callback(true)
+  end
+  client.update_all = function(integrations, callback)
+    maintained = integrations
+    callback({ server = "current", integrations = { "claude" }, manifests = true })
+  end
+  vim.notify = function(value)
+    table.insert(notifications, value)
+  end
+
+  signalbox.setup()
+  signalbox.update_all()
+
+  h.eq({ "codex", "claude" }, maintained)
+  h.eq(1, refreshes)
+  h.contains(notifications[1], "Updating Herdr")
+  h.contains(notifications[2], "integrations codex current, claude updated")
+end)
+
+h.test("update-all rejects concurrent maintenance and resets its guard", function()
+  local signalbox = require("signalbox")
+  local client = require("signalbox.client")
+  local state = require("signalbox.state")
+  signalbox._reset()
+  client._reset()
+  state._reset()
+
+  local original_update_all = client.update_all
+  local original_start = state.start
+  local original_stop = state.stop
+  local original_refresh = state.refresh
+  local original_notify = vim.notify
+  h.defer(function()
+    client.update_all = original_update_all
+    state.start = original_start
+    state.stop = original_stop
+    state.refresh = original_refresh
+    vim.notify = original_notify
+    signalbox._reset()
+    client._reset()
+    state._reset()
+  end)
+
+  local calls = 0
+  local finish
+  local notifications = {}
+  state.start = function() end
+  state.stop = function() end
+  state.refresh = function(_, callback)
+    callback(true)
+  end
+  client.update_all = function(_, callback)
+    calls = calls + 1
+    finish = callback
+  end
+  vim.notify = function(value)
+    table.insert(notifications, value)
+  end
+
+  signalbox.setup()
+  signalbox.update_all()
+  signalbox.update_all()
+  h.eq(1, calls)
+  h.contains(table.concat(notifications, "\n"), "already running")
+
+  finish({ server = "current", integrations = {}, manifests = true })
+  signalbox.update_all()
+  h.eq(2, calls)
 end)
 
 h.test("line and visual send commands use separate unambiguous paths", function()
@@ -470,7 +588,7 @@ h.test("starting an agent collects an initial instruction and attaches its live 
   end
   vim.ui.input = function(opts, callback)
     table.insert(prompts, opts)
-    callback(opts.prompt == "Agent name: " and opts.default or "review the current diff")
+    callback("review the current diff")
   end
   vim.notify = function(message)
     table.insert(notifications, message)
@@ -478,8 +596,8 @@ h.test("starting an agent collects an initial instruction and attaches its live 
 
   signalbox.setup()
   signalbox.start("codex", { cwd = "/tmp/signalbox.nvim" })
-  h.eq("codex-signalbox-nvim-2", prompts[1].default)
-  h.eq("Initial instruction (empty to skip, cancel to abort): ", prompts[2].prompt)
+  h.eq(1, #prompts)
+  h.eq("Initial instruction (empty to skip, cancel to abort): ", prompts[1].prompt)
   h.eq({ kind = "codex", name = "codex-signalbox-nvim-2", cwd = "/tmp/signalbox.nvim" }, started)
   h.eq({ target = "term_2:pane", instruction = "review the current diff" }, prompted)
   h.eq("term_2", attached.terminal_id)
@@ -704,8 +822,7 @@ h.test("resuming an agent confirms handoff and attaches directly to its picker",
   signalbox.resume("codex", { cwd = "/tmp/signalbox.nvim" })
   h.contains(selections[1].opts.prompt, "Stop the existing codex client")
   h.eq({ "Continue", "Cancel" }, selections[1].items)
-  h.eq(1, #inputs)
-  h.eq("codex-signalbox-nvim-2", inputs[1].default)
+  h.eq(0, #inputs)
   h.eq({ kind = "codex", name = "codex-signalbox-nvim-2", cwd = "/tmp/signalbox.nvim" }, resumed)
   h.eq("term_2", attached.terminal_id)
   h.truthy(board_closed)

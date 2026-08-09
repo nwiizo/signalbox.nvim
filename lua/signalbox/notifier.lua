@@ -2,7 +2,7 @@ local config = require("signalbox.config")
 
 local M = {}
 
-local notify = vim.notify
+local notify
 local seen = {}
 local visibility_probe
 
@@ -30,7 +30,7 @@ function M.on_transition(event)
   if seen[key] then
     return
   end
-  if attention_is_visible(event) then
+  if event.status == "blocked" and attention_is_visible(event) then
     return
   end
   seen[key] = true
@@ -39,11 +39,12 @@ function M.on_transition(event)
     message = message .. ": " .. event.title
   end
   local level = event.status == "blocked" and vim.log.levels.WARN or vim.log.levels.INFO
-  notify(message, level, { title = "Signalbox" })
+  local deliver = notify or vim.notify
+  deliver(message, level, { title = "Signalbox" })
 end
 
 function M._set_notify(value)
-  notify = value or vim.notify
+  notify = value
 end
 
 function M._set_visibility_probe(value)
@@ -51,7 +52,7 @@ function M._set_visibility_probe(value)
 end
 
 function M._reset()
-  notify = vim.notify
+  notify = nil
   seen = {}
   visibility_probe = nil
 end

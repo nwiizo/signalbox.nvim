@@ -4,6 +4,7 @@ local initialized = false
 local cleanup_group
 local lifecycle_generation = 0
 local pending_instructions = {}
+local maintenance_running = false
 
 local function message(err)
   if type(err) == "table" then
@@ -146,21 +147,13 @@ local function with_new_agent_name(kind, cwd, explicit_name, callback)
   local client = require("signalbox.client")
   local project = vim.fn.fnamemodify(cwd, ":t")
   local default_name = client.default_agent_name(kind, project ~= "" and project or "agent")
-  local function request_name(suggested_name)
-    vim.ui.input({ prompt = "Agent name: ", default = suggested_name }, function(name)
-      if not name or name == "" then
-        return
-      end
-      local _, name_err = client.validate_agent_name(name)
-      if name_err then
-        notify_error(name_err)
-        return
-      end
-      callback(name)
-    end)
-  end
   if explicit_name then
-    request_name(explicit_name)
+    local name, name_err = client.validate_agent_name(explicit_name)
+    if name_err then
+      notify_error(name_err)
+      return
+    end
+    callback(name)
     return
   end
   require("signalbox.state").ensure_snapshot(function(ok, snapshot)
@@ -168,7 +161,7 @@ local function with_new_agent_name(kind, cwd, explicit_name, callback)
       notify_error(snapshot)
       return
     end
-    request_name(client.next_agent_name(default_name, snapshot.agents))
+    callback(client.next_agent_name(default_name, snapshot.agents))
   end)
 end
 
@@ -223,6 +216,54 @@ function M.refresh()
     if not ok then
       notify_error(result)
     end
+  end)
+end
+
+function M.update_all()
+  ensure_setup()
+  if maintenance_running then
+    vim.notify("Herdr updates are already running", vim.log.levels.WARN, { title = "Signalbox" })
+    return
+  end
+  maintenance_running = true
+  vim.notify("Updating Herdr server, integrations, and manifests...", vim.log.levels.INFO, { title = "Signalbox" })
+  local integrations = {}
+  local agents = require("signalbox.config").get().agents
+  for _, name in ipairs({ "codex", "claude" }) do
+    if agents[name] then
+      table.insert(integrations, name)
+    end
+  end
+  require("signalbox.client").update_all(integrations, function(result, err)
+    maintenance_running = false
+    if err then
+      notify_error(err)
+      return
+    end
+    local updated = {}
+    for _, name in ipairs(result.integrations) do
+      updated[name] = true
+    end
+    local integration_statuses = {}
+    for _, name in ipairs(integrations) do
+      table.insert(integration_statuses, string.format("%s %s", name, updated[name] and "updated" or "current"))
+    end
+    local integration_summary = #integration_statuses > 0 and table.concat(integration_statuses, ", ")
+      or "none configured"
+    vim.notify(
+      string.format(
+        "Herdr updates complete: server %s; integrations %s; manifests updated",
+        result.server == "handed_off" and "handed off" or "current",
+        integration_summary
+      ),
+      vim.log.levels.INFO,
+      { title = "Signalbox" }
+    )
+    require("signalbox.state").refresh({ explicit = true }, function(ok, refresh_err)
+      if not ok then
+        notify_error(refresh_err)
+      end
+    end)
   end)
 end
 
@@ -585,6 +626,7 @@ end
 function M._reset()
   lifecycle_generation = lifecycle_generation + 1
   initialized = false
+  maintenance_running = false
   if cleanup_group then
     pcall(vim.api.nvim_del_augroup_by_id, cleanup_group)
   end

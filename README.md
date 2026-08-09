@@ -66,6 +66,7 @@ With lazy.nvim or LazyVim:
   cmd = {
     "Signalbox",
     "SignalboxRefresh",
+    "SignalboxUpdateAll",
     "SignalboxStart",
     "SignalboxResume",
     "SignalboxAttach",
@@ -109,7 +110,7 @@ Board mappings are buffer-local:
 | `p` / `s`    | Prompt the selected agent; retry a saved initial-instruction draft when one exists          |
 | `e`          | Toggle recent output / Herdr state-detection explanation                                      |
 | `n`          | Give the selected agent a stable role name                                                    |
-| `a`          | Accept or edit an unused suggested name, enter the first instruction, start, and attach       |
+| `a`          | Assign an unused project-based name, enter the first instruction, start, and attach            |
 | `R`          | Resume a saved Claude Code or Codex conversation inside a new Herdr-managed agent              |
 | `g`          | Open Snacks Lazygit at the selected agent's repository                                        |
 | `d`          | Open Diffview at the selected agent's repository                                              |
@@ -134,7 +135,8 @@ Use `<C-g>` (`Ctrl-g`) as the single Signalbox key. In a normal editor buffer it
 | ------------------------------------ | ------------------------------------------------------------------------------------ |
 | `:Signalbox`                         | Toggle the attention board                                                           |
 | `:SignalboxRefresh`                  | Refresh Herdr state immediately                                                      |
-| `:SignalboxStart [codex\|claude]`    | Accept or edit an unused suggested name, enter the first instruction, start, and attach |
+| `:SignalboxUpdateAll`                | Live-handoff an outdated server, update configured integrations, and update manifests |
+| `:SignalboxStart [codex\|claude]`    | Assign an unused project-based name, enter the first instruction, start, and attach     |
 | `:SignalboxResume [codex\|claude]`   | Open the provider's resume picker inside Herdr and attach                            |
 | `:SignalboxAttach[!] [target]`       | Attach; `!` explicitly takes over another direct client                              |
 | `:SignalboxPrompt [target]`          | Prompt an agent                                                                      |
@@ -155,6 +157,8 @@ After confirmation, Signalbox creates a Herdr-managed pane, opens the provider's
 
 `:checkhealth signalbox` reads Herdr's active detection-manifest status without changing it. A missing check time or one older than seven days is a warning with the explicit `herdr server update-agent-manifests` recovery command; local overrides are reported separately because they intentionally shadow remote rules.
 
+`:SignalboxUpdateAll` is the explicit maintenance path. It preserves panes by live-handoffing only when the running server protocol is incompatible, installs outdated or missing Codex/Claude integrations that are present in `agents`, then updates Herdr's detection manifests. It does not install or upgrade the Herdr binary because Signalbox does not own its package manager.
+
 ## Ambient status
 
 `statusline()` returns only states that need attention:
@@ -170,7 +174,7 @@ It can be used from Incline, lualine, or another renderer after Signalbox is loa
 
 Signalbox observes Herdr's semantic agent state and sends a Neovim notification once when an agent changes to `blocked` or `done`. It does not forward Herdr's own toast. The initial snapshot stays quiet, while `statusline()` and the board still expose existing attention.
 
-Notifications are suppressed while the board is open or the matching live attached terminal is focused because the state is already visible. Closing that surface alone does not replay the event; if the agent leaves the attention state and later returns, the new transition can notify normally. An already delivered notification stays deduplicated for the same Herdr revision. Herdr's `[ui.toast]` delivery is configured independently; enabling both a Herdr desktop/terminal toast and Signalbox notifications intentionally produces two notification surfaces.
+Blocked notifications are suppressed while the board is open or the matching live attached terminal is focused because the approval state is already visible. Completion notifications are always delivered through the current `vim.notify` provider, including while an attention surface is visible. Closing a surface alone does not replay a suppressed blocked event; if the agent leaves the attention state and later returns, the new transition can notify normally. An already delivered notification stays deduplicated for the same Herdr revision. Herdr's `[ui.toast]` delivery is configured independently; enabling both a Herdr desktop/terminal toast and Signalbox notifications intentionally produces two notification surfaces.
 
 ## Configuration
 
@@ -222,6 +226,7 @@ agents = {
 - Context larger than the configured line or byte limit is rejected.
 - File references reject unnamed and modified buffers.
 - Closing Neovim stops only local attach clients, never Herdr agents or its server.
+- Signalbox cannot adopt a live process from a terminal Herdr does not own; stop that client, then use `:SignalboxResume`.
 - Resume rehomes saved conversation state, not a running process; stop the original client before selecting its session.
 - Current-project filtering uses the Git root. Outside a Git worktree, Signalbox matches the exact working directory.
 - Signalbox currently refreshes snapshots on a short adaptive poll. Herdr socket events are the next transport milestone.

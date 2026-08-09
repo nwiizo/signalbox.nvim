@@ -18,6 +18,7 @@ local server_ready = false
 local server_checking = false
 local server_waiters = {}
 local agent_shell_retry_ms = { 100, 300, 1000 }
+local maintenance_timeout_ms = 30000
 
 local function trim(value)
   return ((value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
@@ -546,6 +547,158 @@ function M.integration_status(callback)
   end)
 end
 
+local function integration_is_current(output, name)
+  for line in (output or ""):gmatch("[^\r\n]+") do
+    local reported, status = line:match("^([^:]+):%s*(.+)$")
+    if reported == name then
+      return status:match("^current") ~= nil
+    end
+  end
+  return false
+end
+
+local function parse_server_status(output)
+  if output:match("status:%s*not running") then
+    return "not_running"
+  end
+  local protocol = tonumber(output:match("protocol:%s*(%d+)"))
+  if protocol and output:match("compatible:%s*yes") then
+    return "compatible"
+  end
+  return "incompatible"
+end
+
+local check_server
+
+function M.update_all(integrations, callback)
+  local result = { server = "current", integrations = {}, manifests = false }
+
+  local function update_manifests()
+    run({ "server", "update-agent-manifests" }, { timeout_ms = maintenance_timeout_ms }, function(_, err)
+      if err then
+        callback(nil, err)
+        return
+      end
+      result.manifests = true
+      callback(result)
+    end)
+  end
+
+  local function update_integrations()
+    M.integration_status(function(output, err)
+      if err then
+        callback(nil, err)
+        return
+      end
+      local function update(index)
+        local name = integrations[index]
+        if not name then
+          update_manifests()
+          return
+        end
+        if integration_is_current(output, name) then
+          update(index + 1)
+          return
+        end
+        run({ "integration", "install", name }, { timeout_ms = maintenance_timeout_ms }, function(_, install_err)
+          if install_err then
+            callback(nil, install_err)
+            return
+          end
+          table.insert(result.integrations, name)
+          update(index + 1)
+        end)
+      end
+      update(1)
+    end)
+  end
+
+  local function ensure_running_server()
+    M.mark_server_unavailable()
+    M.ensure_server(function(ok, err)
+      if not ok then
+        callback(nil, err)
+        return
+      end
+      update_integrations()
+    end)
+  end
+
+  local function finish_handoff_wait(ok, err)
+    if ok then
+      server_ready = true
+      update_integrations()
+      return
+    end
+    if err and err.kind == "executable" then
+      callback(nil, err)
+      return
+    end
+    local delays = config.get().server_retry_ms
+    local function retry(index, last_err)
+      if index > #delays then
+        callback(nil, {
+          kind = "server",
+          message = "Herdr server did not become ready after live handoff: "
+            .. (last_err and last_err.message or "no response"),
+          cause = last_err,
+        })
+        return
+      end
+      defer(function()
+        check_server(function(retry_ok, retry_err)
+          if retry_ok then
+            server_ready = true
+            update_integrations()
+          elseif retry_err and retry_err.kind == "executable" then
+            callback(nil, retry_err)
+          else
+            retry(index + 1, retry_err)
+          end
+        end)
+      end, delays[index])
+    end
+    retry(1, err)
+  end
+
+  run({ "status", "server" }, {}, function(status, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+    local output = status.stdout or ""
+    local status_kind = parse_server_status(output)
+    if status_kind == "not_running" then
+      ensure_running_server()
+    elseif status_kind == "compatible" then
+      server_ready = true
+      update_integrations()
+    else
+      local executable = vim.fn.exepath(config.get().herdr_cmd)
+      if executable == "" then
+        callback(nil, {
+          kind = "executable",
+          message = "Herdr executable was not found; check the herdr_cmd config value and your PATH",
+        })
+        return
+      end
+      run(
+        { "server", "live-handoff", "--import-exe", executable },
+        { timeout_ms = maintenance_timeout_ms },
+        function(_, handoff_err)
+          if handoff_err then
+            callback(nil, handoff_err)
+            return
+          end
+          result.server = "handed_off"
+          M.mark_server_unavailable()
+          check_server(finish_handoff_wait)
+        end
+      )
+    end
+  end)
+end
+
 local function finish_server_check(ok, err)
   server_checking = false
   server_ready = ok == true
@@ -556,19 +709,19 @@ local function finish_server_check(ok, err)
   end
 end
 
-local function check_server(callback)
+check_server = function(callback)
   run({ "status", "server" }, {}, function(result, err)
     if err then
       callback(false, err)
       return
     end
     local output = result.stdout or ""
-    if output:match("status:%s*not running") then
+    local status_kind = parse_server_status(output)
+    if status_kind == "not_running" then
       callback(false, { kind = "server", message = "Herdr server is not running" })
       return
     end
-    local protocol = tonumber(output:match("protocol:%s*(%d+)"))
-    if not protocol or not output:match("compatible:%s*yes") then
+    if status_kind ~= "compatible" then
       callback(false, {
         kind = "protocol",
         message = "Herdr did not report a compatible protocol; update Herdr and run :checkhealth signalbox",

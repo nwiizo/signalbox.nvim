@@ -11,6 +11,10 @@ vim.api.nvim_create_user_command("SignalboxRefresh", function()
   require("signalbox").refresh()
 end, { desc = "Refresh Herdr agent state" })
 
+vim.api.nvim_create_user_command("SignalboxUpdateAll", function()
+  require("signalbox").update_all()
+end, { desc = "Update Herdr server, integrations, and detection manifests" })
+
 vim.api.nvim_create_user_command("SignalboxStart", function(args)
   require("signalbox").start(args.args ~= "" and args.args or nil)
 end, {

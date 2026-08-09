@@ -41,6 +41,33 @@ h.test("notifier respects disabled done notifications", function()
   h.eq(0, count)
 end)
 
+h.test("notifier follows a vim.notify provider installed after Signalbox setup", function()
+  reset()
+  local original_notify = vim.notify
+  local count = 0
+  h.defer(function()
+    vim.notify = original_notify
+  end)
+  vim.notify = function()
+    count = count + 1
+  end
+  notifier.on_transition({ terminal_id = "late-provider", status = "done", revision = 1, name = "late-provider" })
+  h.eq(1, count)
+end)
+
+h.test("notifier delivers completion while the attention surface is visible", function()
+  reset()
+  local count = 0
+  notifier._set_notify(function()
+    count = count + 1
+  end)
+  notifier._set_visibility_probe(function()
+    return true
+  end)
+  notifier.on_transition({ terminal_id = "visible", status = "done", revision = 1, name = "visible" })
+  h.eq(1, count)
+end)
+
 h.test("notifier does not burn a dedup key while attention is visible", function()
   reset()
   local notifications = 0
@@ -59,7 +86,7 @@ h.test("notifier does not burn a dedup key while attention is visible", function
   h.eq(1, notifications)
 end)
 
-h.test("notifier only suppresses a matching live attach", function()
+h.test("notifier only suppresses matching blocked attention in a live attach", function()
   reset()
   local notifications = 0
   notifier._set_notify(function()
@@ -73,13 +100,13 @@ h.test("notifier only suppresses a matching live attach", function()
   terminal._terminals().attached = { bufnr = live_buffer, job_id = 17 }
 
   vim.api.nvim_set_current_buf(stale_buffer)
-  local done = { terminal_id = "attached", status = "done", revision = 1, name = "attached" }
-  notifier.on_transition(done)
+  local blocked = { terminal_id = "attached", status = "blocked", revision = 1, name = "attached" }
+  notifier.on_transition(blocked)
   vim.api.nvim_set_current_buf(live_buffer)
-  done.revision = 2
-  notifier.on_transition(done)
+  blocked.revision = 2
+  notifier.on_transition(blocked)
   terminal._terminals().attached = nil
-  notifier.on_transition(done)
+  notifier.on_transition(blocked)
   vim.api.nvim_set_current_buf(previous)
   vim.api.nvim_buf_delete(live_buffer, { force = true })
   vim.api.nvim_buf_delete(stale_buffer, { force = true })

@@ -724,3 +724,138 @@ h.test("client rejects a reachable but incompatible Herdr server", function()
     h.eq("protocol", err.kind)
   end)
 end)
+
+h.test("client update-all skips a compatible server and updates stale integrations before manifests", function()
+  reset()
+  config.setup()
+  local calls = {}
+  client._set_runner(function(argv, opts, callback)
+    table.insert(calls, vim.deepcopy(argv))
+    if argv[2] == "status" then
+      callback({ code = 0, stdout = "status: running\nversion: 0.8.0\nprotocol: 19\ncompatible: yes\n", stderr = "" })
+    elseif argv[2] == "integration" and argv[3] == "status" then
+      callback({ code = 0, stdout = "codex: current (v7)\nclaude: outdated (v6 < v7)\n", stderr = "" })
+    else
+      h.eq(30000, opts.timeout_ms)
+      callback({ code = 0, stdout = "", stderr = "" })
+    end
+  end)
+
+  client.update_all({ "codex", "claude" }, function(result, err)
+    h.eq(nil, err)
+    h.eq({ server = "current", integrations = { "claude" }, manifests = true }, result)
+  end)
+
+  h.eq({
+    { "herdr", "status", "server" },
+    { "herdr", "integration", "status" },
+    { "herdr", "integration", "install", "claude" },
+    { "herdr", "server", "update-agent-manifests" },
+  }, calls)
+end)
+
+h.test("client update-all starts a stopped server before maintenance", function()
+  reset()
+  config.setup({ server_retry_ms = { 1 } })
+  local calls = {}
+  local status_calls = 0
+  local starts = 0
+  client._set_defer(function(callback)
+    callback()
+  end)
+  client._set_job_starter(function()
+    starts = starts + 1
+    return 17
+  end)
+  client._set_runner(function(argv, _, callback)
+    table.insert(calls, vim.deepcopy(argv))
+    if argv[2] == "status" then
+      status_calls = status_calls + 1
+      local output = status_calls < 3 and "status: not running\n" or "status: running\nprotocol: 19\ncompatible: yes\n"
+      callback({ code = 0, stdout = output, stderr = "" })
+    elseif argv[2] == "integration" and argv[3] == "status" then
+      callback({ code = 0, stdout = "codex: current (v7)\n", stderr = "" })
+    else
+      callback({ code = 0, stdout = "", stderr = "" })
+    end
+  end)
+
+  client.update_all({ "codex" }, function(result, err)
+    h.eq(nil, err)
+    h.eq({ server = "current", integrations = {}, manifests = true }, result)
+  end)
+
+  h.eq(1, starts)
+  h.eq({
+    { "herdr", "status", "server" },
+    { "herdr", "status", "server" },
+    { "herdr", "status", "server" },
+    { "herdr", "integration", "status" },
+    { "herdr", "server", "update-agent-manifests" },
+  }, calls)
+end)
+
+h.test("client update-all live-handoffs an incompatible server before maintenance", function()
+  reset()
+  config.setup({ herdr_cmd = vim.v.progpath, server_retry_ms = { 1 } })
+  local calls = {}
+  local status_calls = 0
+  local starts = 0
+  client._set_defer(function(callback)
+    callback()
+  end)
+  client._set_job_starter(function()
+    starts = starts + 1
+    return nil, "must not start a second server after handoff"
+  end)
+  client._set_runner(function(argv, _, callback)
+    table.insert(calls, vim.deepcopy(argv))
+    if argv[2] == "status" then
+      status_calls = status_calls + 1
+      if status_calls == 2 then
+        callback({ code = 0, stdout = "status: not running\n", stderr = "" })
+        return
+      end
+      local compatible = status_calls > 2 and "yes" or "no"
+      callback({
+        code = 0,
+        stdout = "status: running\nversion: 0.7.5\nprotocol: 17\ncompatible: " .. compatible .. "\n",
+        stderr = "",
+      })
+    elseif argv[2] == "integration" and argv[3] == "status" then
+      callback({ code = 0, stdout = "codex: current (v7)\n", stderr = "" })
+    else
+      callback({ code = 0, stdout = "", stderr = "" })
+    end
+  end)
+
+  client.update_all({ "codex" }, function(result, err)
+    h.eq(nil, err)
+    h.eq({ server = "handed_off", integrations = {}, manifests = true }, result)
+  end)
+
+  h.eq(0, starts)
+  h.eq({
+    { vim.v.progpath, "status", "server" },
+    { vim.v.progpath, "server", "live-handoff", "--import-exe", vim.v.progpath },
+    { vim.v.progpath, "status", "server" },
+    { vim.v.progpath, "status", "server" },
+    { vim.v.progpath, "integration", "status" },
+    { vim.v.progpath, "server", "update-agent-manifests" },
+  }, calls)
+end)
+
+h.test("client update-all gives actionable guidance when Herdr cannot be resolved", function()
+  reset()
+  config.setup({ herdr_cmd = "definitely-not-a-real-herdr-command" })
+  client._set_runner(function(_, _, callback)
+    callback({ code = 0, stdout = "status: running\nprotocol: 17\ncompatible: no\n", stderr = "" })
+  end)
+
+  client.update_all({ "codex" }, function(result, err)
+    h.eq(nil, result)
+    h.eq("executable", err.kind)
+    h.contains(err.message, "herdr_cmd")
+    h.contains(err.message, "PATH")
+  end)
+end)
