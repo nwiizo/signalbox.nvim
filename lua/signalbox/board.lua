@@ -417,7 +417,6 @@ end
 local function attach_selected()
   local agent = require_agent_row()
   if agent then
-    M.close()
     require("signalbox").attach(agent.terminal_id)
   end
 end

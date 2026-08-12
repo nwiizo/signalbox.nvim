@@ -519,6 +519,102 @@ h.test("rename aborts when the selected agent is renamed elsewhere while the inp
   h.contains(table.concat(notifications, "\n"), "agent changed")
 end)
 
+h.test("attach moves Neovim into the selected agent workspace before opening its terminal", function()
+  local signalbox = require("signalbox")
+  local state = require("signalbox.state")
+  local client = require("signalbox.client")
+  local terminal = require("signalbox.terminal")
+  local board = require("signalbox.board")
+  local config = require("signalbox.config")
+  signalbox._reset()
+  state._reset()
+  client._reset()
+  config._reset()
+
+  local originals = {
+    state_start = state.start,
+    state_stop = state.stop,
+    ensure_server = client.ensure_server,
+    move_current_pane = client.move_current_pane,
+    attach = terminal.attach,
+    board_is_open = board.is_open,
+    board_close = board.close,
+    notify = vim.notify,
+    herdr_env = vim.env.HERDR_ENV,
+  }
+  h.defer(function()
+    state.start = originals.state_start
+    state.stop = originals.state_stop
+    client.ensure_server = originals.ensure_server
+    client.move_current_pane = originals.move_current_pane
+    terminal.attach = originals.attach
+    board.is_open = originals.board_is_open
+    board.close = originals.board_close
+    vim.notify = originals.notify
+    vim.env.HERDR_ENV = originals.herdr_env
+    signalbox._reset()
+    state._reset()
+    client._reset()
+    config._reset()
+  end)
+
+  local target = agent("term_2", "reviewer", "done")
+  target.workspace_id = "w2"
+  local move_callback
+  local moved_to
+  local attached
+  local board_closed = false
+  local notifications = {}
+  state.start = function() end
+  state.stop = function() end
+  client.ensure_server = function(callback)
+    callback(true)
+  end
+  client.move_current_pane = function(workspace_id, callback)
+    moved_to = workspace_id
+    move_callback = callback
+  end
+  terminal.attach = function(value)
+    attached = value
+    return 12
+  end
+  board.is_open = function()
+    return true
+  end
+  board.close = function()
+    board_closed = true
+  end
+  vim.notify = function(value)
+    table.insert(notifications, value)
+  end
+  vim.env.HERDR_ENV = "1"
+
+  signalbox.setup()
+  state._set_transition_handler(function() end)
+  state._set_emit(function() end)
+  state._accept({
+    agents = { target },
+    workspaces = {
+      { workspace_id = "w1", label = "editor" },
+      { workspace_id = "w2", label = "review" },
+    },
+  })
+  signalbox.attach("term_2")
+
+  h.eq("w2", moved_to)
+  h.eq(nil, attached)
+  h.eq(false, board_closed)
+  move_callback(nil, { kind = "process", message = "move failed" })
+  h.eq(nil, attached)
+  h.eq(false, board_closed)
+  h.contains(table.concat(notifications, "\n"), "could not move Neovim")
+
+  signalbox.attach("term_2")
+  move_callback({ moved = true, pane = { pane_id = "w2:p3", workspace_id = "w2" } })
+  h.eq("term_2", attached.terminal_id)
+  h.eq(true, board_closed)
+end)
+
 h.test("starting an agent collects an initial instruction and attaches its live terminal", function()
   local signalbox = require("signalbox")
   local state = require("signalbox.state")

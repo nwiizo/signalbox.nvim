@@ -39,6 +39,7 @@ That job shapes the product:
 - Herdr 0.8.0-verified workspace/tab creation and persistent Codex/Claude launches
 - Conversation rehoming through the native Claude Code and Codex resume pickers
 - Direct attach in a native right-hand Neovim terminal
+- Cross-Space attach that moves Neovim's Herdr pane to the selected agent's Space
 - Prompt, file, visual selection, range, and LSP diagnostic context
 - Transient retry drafts when a provider update or setup screen intercepts the initial instruction
 - Optional `Snacks.lazygit` and Diffview actions from the selected agent's cwd
@@ -134,6 +135,8 @@ The default view keeps agents from the current Git root and also surfaces blocke
 Codex or Claude Code may show an update, trust, hook, login, or other setup screen before it can accept an instruction. Signalbox asks Herdr to confirm that the initial prompt made the agent start working. If Herdr reports `agent_prompt_stalled`, Signalbox warns immediately and keeps the instruction in memory. Clear the provider screen, return with `<C-g>`, select the agent, and press `p`; the original instruction is already filled in, so Enter retries it. The draft is discarded once work begins and is never written to disk.
 
 The right pane is deliberately a read-only, ephemeral view of recent output. Its title says `read-only`; press `i` or `<CR>` from either pane to replace the board with an interactive Herdr terminal in insert mode.
+
+When Neovim itself runs inside Herdr and the selected agent belongs to another Space, attach first moves the Herdr pane hosting Neovim into that Space and follows it. Herdr keeps the Neovim process running during the move. Neovim instances outside Herdr attach without moving a pane.
 
 Use `<C-g>` (`Ctrl-g`) as the single Signalbox key. In a normal editor buffer it opens the board and starts Herdr on demand; in a Signalbox-attached terminal its buffer-local mapping takes priority, detaches the Neovim client, leaves the Herdr agent running, and returns directly to the board. A single control chord has no mapping timeout in which Codex or Claude Code can consume a partial sequence. The terminal key is configurable with `terminal.return_key`.
 
@@ -234,6 +237,7 @@ agents = {
 - Context larger than the configured line or byte limit is rejected.
 - File references reject unnamed and modified buffers.
 - Closing Neovim stops only local attach clients, never Herdr agents or its server.
+- Moving Neovim out of a Space where it is the last pane lets Herdr close that now-empty source Space.
 - Signalbox cannot adopt a live process from a terminal Herdr does not own; stop that client, then use `:SignalboxResume`.
 - Resume rehomes saved conversation state, not a running process; stop the original client before selecting its session.
 - Current-project filtering uses the Git root. Outside a Git worktree, Signalbox matches the exact working directory.

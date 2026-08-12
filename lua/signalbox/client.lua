@@ -526,6 +526,50 @@ function M.read(target, lines, callback)
   )
 end
 
+function M.move_current_pane(workspace_id, callback)
+  if type(workspace_id) ~= "string" or workspace_id == "" then
+    callback(nil, { kind = "validation", message = "target Herdr workspace is missing" })
+    return
+  end
+  run_json({ "pane", "current", "--current" }, function(result, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+    local pane = result.type == "pane_current" and result.pane or nil
+    if type(pane) ~= "table" or type(pane.pane_id) ~= "string" or type(pane.workspace_id) ~= "string" then
+      callback(nil, { kind = "schema", message = "Herdr did not return the calling pane" })
+      return
+    end
+    if pane.workspace_id == workspace_id then
+      callback({ moved = false, pane = pane })
+      return
+    end
+    run_json(
+      { "pane", "move", pane.pane_id, "--new-tab", "--workspace", workspace_id, "--focus" },
+      function(move_result, move_err)
+        if move_err then
+          callback(nil, move_err)
+          return
+        end
+        local moved_pane = move_result.type == "pane_move"
+            and type(move_result.move_result) == "table"
+            and move_result.move_result.pane
+          or nil
+        if
+          type(moved_pane) ~= "table"
+          or type(moved_pane.pane_id) ~= "string"
+          or moved_pane.workspace_id ~= workspace_id
+        then
+          callback(nil, { kind = "schema", message = "Herdr did not confirm the calling pane move" })
+          return
+        end
+        callback({ moved = true, pane = moved_pane })
+      end
+    )
+  end)
+end
+
 function M.attach(target, takeover, opts)
   local args = { "agent", "attach", target }
   if takeover then

@@ -315,6 +315,74 @@ h.test("client uses Herdr argv contracts for rename and detection explanation", 
   h.eq({ "herdr", "agent", "explain", "w1:p1", "--format", "text" }, calls[2])
 end)
 
+h.test("client moves the calling pane into a target Herdr workspace and follows focus", function()
+  reset()
+  config.setup()
+  local calls = {}
+  local moved
+  client._set_runner(function(argv, _, callback)
+    table.insert(calls, vim.deepcopy(argv))
+    local result
+    if argv[3] == "current" then
+      result = {
+        type = "pane_current",
+        pane = { pane_id = "w1:p1", workspace_id = "w1" },
+      }
+    else
+      result = {
+        type = "pane_move",
+        move_result = {
+          previous_pane_id = "w1:p1",
+          previous_workspace_id = "w1",
+          pane = { pane_id = "w2:p3", workspace_id = "w2" },
+        },
+      }
+    end
+    callback({ code = 0, stdout = vim.json.encode({ id = "1", result = result }), stderr = "" })
+  end)
+
+  client.move_current_pane("w2", function(result, err)
+    h.eq(nil, err)
+    moved = result
+  end)
+
+  h.eq({ "herdr", "pane", "current", "--current" }, calls[1])
+  h.eq({ "herdr", "pane", "move", "w1:p1", "--new-tab", "--workspace", "w2", "--focus" }, calls[2])
+  h.eq(true, moved.moved)
+  h.eq("w2:p3", moved.pane.pane_id)
+end)
+
+h.test("client leaves the calling pane in place when it is already in the target workspace", function()
+  reset()
+  config.setup()
+  local calls = {}
+  local move
+  client._set_runner(function(argv, _, callback)
+    table.insert(calls, vim.deepcopy(argv))
+    callback({
+      code = 0,
+      stdout = vim.json.encode({
+        id = "1",
+        result = {
+          type = "pane_current",
+          pane = { pane_id = "w2:p1", workspace_id = "w2" },
+        },
+      }),
+      stderr = "",
+    })
+  end)
+
+  client.move_current_pane("w2", function(result, err)
+    h.eq(nil, err)
+    move = result
+  end)
+
+  h.eq(1, #calls)
+  h.eq({ "herdr", "pane", "current", "--current" }, calls[1])
+  h.eq(false, move.moved)
+  h.eq("w2:p1", move.pane.pane_id)
+end)
+
 h.test("client asks Herdr to confirm that an initial prompt started working", function()
   reset()
   config.setup()

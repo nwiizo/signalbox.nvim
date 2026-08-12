@@ -143,6 +143,31 @@ local function with_server(callback)
   end)
 end
 
+local function attach_agent(agent, opts, callback)
+  local function open_terminal()
+    local board = require("signalbox.board")
+    if board.is_open() then
+      board.close()
+    end
+    local bufnr = require("signalbox.terminal").attach(agent, opts)
+    if bufnr and callback then
+      callback(bufnr)
+    end
+  end
+
+  if vim.env.HERDR_ENV ~= "1" then
+    open_terminal()
+    return
+  end
+  require("signalbox.client").move_current_pane(agent.workspace_id, function(_, err)
+    if err then
+      notify_error("could not move Neovim to the agent's Herdr Space: " .. message(err))
+      return
+    end
+    open_terminal()
+  end)
+end
+
 local function with_new_agent_name(kind, cwd, explicit_name, callback)
   local client = require("signalbox.client")
   local project = vim.fn.fnamemodify(cwd, ":t")
@@ -306,17 +331,14 @@ function M.start(kind, opts)
                 require("signalbox.state").refresh({ explicit = true })
                 return
               end
-              local board = require("signalbox.board")
-              if board.is_open() then
-                board.close()
-              end
-              require("signalbox.terminal").attach(started_agent)
-              vim.notify(
-                string.format("started %s agent %s", selected_kind, name),
-                vim.log.levels.INFO,
-                { title = "Signalbox" }
-              )
-              require("signalbox.state").refresh({ explicit = true })
+              attach_agent(started_agent, nil, function()
+                vim.notify(
+                  string.format("started %s agent %s", selected_kind, name),
+                  vim.log.levels.INFO,
+                  { title = "Signalbox" }
+                )
+                require("signalbox.state").refresh({ explicit = true })
+              end)
             end
 
             if instruction == "" then
@@ -391,17 +413,14 @@ function M.resume(kind, opts)
               require("signalbox.state").refresh({ explicit = true })
               return
             end
-            local board = require("signalbox.board")
-            if board.is_open() then
-              board.close()
-            end
-            require("signalbox.terminal").attach(started_agent)
-            vim.notify(
-              string.format("%s resume picker is ready; choose the conversation to rehome", selected_kind),
-              vim.log.levels.INFO,
-              { title = "Signalbox" }
-            )
-            require("signalbox.state").refresh({ explicit = true })
+            attach_agent(started_agent, nil, function()
+              vim.notify(
+                string.format("%s resume picker is ready; choose the conversation to rehome", selected_kind),
+                vim.log.levels.INFO,
+                { title = "Signalbox" }
+              )
+              require("signalbox.state").refresh({ explicit = true })
+            end)
           end)
         end)
       end)
@@ -417,7 +436,7 @@ function M.attach(target, opts)
       return
     end
     with_server(function()
-      require("signalbox.terminal").attach(agent, opts)
+      attach_agent(agent, opts)
     end)
   end)
 end
