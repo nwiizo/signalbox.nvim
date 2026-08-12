@@ -11,6 +11,10 @@ It is named after a railway signal box: it does not drive the trains or replace 
 > [!NOTE]
 > This is an unofficial community integration. It is not maintained or endorsed by the Herdr project.
 
+<p align="center">
+  <img src="assets/signalbox-board.png" alt="Signalbox board showing completed Codex and Claude agents with a read-only output preview">
+</p>
+
 ## The job
 
 > When I delegate work to several coding agents while editing, help me notice only the work that needs human attention, inspect it without touring terminal panes, intervene, and return after Neovim restarts.
@@ -90,6 +94,10 @@ With lazy.nvim or LazyVim:
 ## Workflow
 
 Open the board with `:Signalbox`.
+
+<p align="center">
+  <img src="assets/signalbox-demo.gif" alt="Opening and closing the Signalbox attention board in Neovim">
+</p>
 
 ```text
 ╭──────── Signalbox  !1  ✓1 ────────╮ ╭──────── reviewer · read-only ────────────╮
