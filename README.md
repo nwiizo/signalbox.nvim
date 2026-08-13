@@ -33,6 +33,7 @@ That job shapes the product:
 - Current project agents plus `blocked`/`done` agents elsewhere by default
 - A compact count of agents still working elsewhere, without crowding the attention queue
 - Ephemeral recent-output preview for the selected agent
+- In-product `INPUT → RESULT` guide for every board key
 - One-key Herdr state explanation with matched detection rule and evidence
 - Stable role names for agents discovered outside Signalbox
 - Notifications when an agent becomes blocked or completes work
@@ -127,10 +128,12 @@ Board mappings are buffer-local:
 | `A`          | Toggle default attention view / all agents                                                    |
 | `r`          | Refresh immediately                                                                           |
 | `q`          | Close                                                                                         |
-| `?`          | Toggle help                                                                                   |
-| `<Tab>`      | Move between the agent list and read-only preview                                             |
+| `?`          | Replace the right pane with an input-to-result operation guide                                |
+| `<Tab>`      | Move between the agent list and the right pane                                                |
 
 The default view keeps agents from the current Git root and also surfaces blocked or completed work elsewhere. When active work is filtered out, the second line shows `A: N working elsewhere`; press `A` to reveal the whole Herdr session.
+
+Press `?` for an `INPUT → RESULT` guide that explains the text or key to enter and the resulting action, including cross-Space attach and returning from an attached terminal. If the recent-output preview is hidden, the guide opens the right pane temporarily; pressing `?` again restores the previous preview setting.
 
 Codex or Claude Code may show an update, trust, hook, login, or other setup screen before it can accept an instruction. Signalbox asks Herdr to confirm that the initial prompt made the agent start working. If Herdr reports `agent_prompt_stalled`, Signalbox warns immediately and keeps the instruction in memory. Clear the provider screen, return with `<C-g>`, select the agent, and press `p`; the original instruction is already filled in, so Enter retries it. The draft is discarded once work begins and is never written to disk.
 

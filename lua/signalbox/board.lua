@@ -59,10 +59,22 @@ local function geometry()
   local height = dimension(board.height, vim.o.lines - vim.o.cmdheight, 10)
   local row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1)
   local col = math.max(0, math.floor((vim.o.columns - total_width) / 2))
-  if not preview_enabled then
+  if not preview_enabled and not help_visible then
     return { row = row, col = col, height = height, list_width = total_width }
   end
   local usable_width = total_width - 2
+  if help_visible then
+    local list_width = math.min(28, math.max(16, math.floor(usable_width * 0.25)))
+    local preview_width = usable_width - list_width
+    return {
+      row = row,
+      col = col,
+      height = height,
+      list_width = list_width,
+      preview_col = col + total_width - preview_width,
+      preview_width = preview_width,
+    }
+  end
   local minimum_list_width = math.min(36, math.max(24, math.floor(usable_width * 0.6)))
   local maximum_preview_width = math.max(16, usable_width - minimum_list_width)
   local preview_width = math.min(math.floor(usable_width * board.preview_ratio), maximum_preview_width)
@@ -121,6 +133,7 @@ local function summary_title()
   if state.get().stale then
     table.insert(parts, { " ~stale ", "SignalboxUnknown" })
   end
+  table.insert(parts, { " ? guide ", "SignalboxMuted" })
   return parts
 end
 
@@ -161,8 +174,8 @@ local function set_title(window, title)
 end
 
 local function preview_title(agent, suffix_group)
-  local hint = preview_mode == "explain" and "· detection · e output · i attach "
-    or "· read-only · e explain · i attach "
+  local hint = preview_mode == "explain" and "· detection · e output · i attach · ? guide "
+    or "· read-only · e explain · i attach · ? guide "
   return {
     { " " .. agent.name .. " ", highlight_for[agent.status] },
     { hint, suffix_group or "SignalboxMuted" },
@@ -170,14 +183,90 @@ local function preview_title(agent, suffix_group)
 end
 
 local function empty_preview_title()
-  return { { " read-only · select agent · i attach ", "SignalboxMuted" } }
+  return { { " read-only · select agent · i attach · ? guide ", "SignalboxMuted" } }
+end
+
+local function guide_title()
+  return {
+    { " Guide ", "SignalboxTitle" },
+    { "· input → result · ? close ", "SignalboxMuted" },
+  }
+end
+
+local function guide_content(width)
+  local entries = {
+    { key = "j / k", result = "Select agent; in the right pane, scroll." },
+    { key = "<Tab>", result = "Switch between list and right pane." },
+    { heading = "SELECTED AGENT" },
+    { key = "<CR> / i", result = "Attach; Another Space moves Neovim first." },
+    { key = "p / s", result = "Enter instruction → send to agent." },
+    { key = "e", result = "Show Herdr state evidence." },
+    { key = "n", result = "Enter name → rename agent." },
+    { heading = "ATTACHED TERMINAL" },
+    { key = config.get().terminal.return_key, result = "Return to board; agent keeps running." },
+    { heading = "NEW WORK" },
+    { key = "a", result = "Agent + instruction → start + attach." },
+    { key = "R", result = "Agent → resume picker + attach." },
+    { heading = "VIEW AND TOOLS" },
+    { key = "A", result = "Attention view ↔ all agents." },
+    { key = "v", result = "Show / hide output preview." },
+    { key = "g / d", result = "Lazygit / Diffview at agent repo." },
+    { key = "r", result = "Refresh Herdr state." },
+    { key = "? / q", result = "Close guide / close Signalbox." },
+  }
+  local lines = { "INPUT → RESULT" }
+  local highlights = { { line = 1, group = "SignalboxGuideHeader", start_col = 0, end_col = -1 } }
+  local wide = width >= 40
+  for _, entry in ipairs(entries) do
+    if entry.heading then
+      table.insert(lines, entry.heading)
+      table.insert(highlights, { line = #lines, group = "SignalboxGuideHeader", start_col = 0, end_col = -1 })
+    elseif wide then
+      table.insert(lines, string.format("%-10s %s", entry.key, entry.result))
+      table.insert(highlights, { line = #lines, group = "SignalboxGuideKey", start_col = 0, end_col = #entry.key })
+    else
+      table.insert(lines, entry.key)
+      table.insert(highlights, { line = #lines, group = "SignalboxGuideKey", start_col = 0, end_col = -1 })
+      table.insert(lines, "  " .. entry.result)
+    end
+  end
+  return lines, highlights
+end
+
+local function render_guide()
+  local width = vim.api.nvim_win_get_width(preview_window)
+  local guide_target = string.format("guide:%d:%s", width, config.get().terminal.return_key)
+  if preview_target == guide_target then
+    return
+  end
+  preview_target = guide_target
+  preview_in_flight = nil
+  local lines, highlights = guide_content(width)
+  preview_message(lines)
+  vim.api.nvim_buf_clear_namespace(preview_buffer, namespace, 0, -1)
+  for _, highlight in ipairs(highlights) do
+    vim.api.nvim_buf_add_highlight(
+      preview_buffer,
+      namespace,
+      highlight.group,
+      highlight.line - 1,
+      highlight.start_col,
+      highlight.end_col
+    )
+  end
+  set_title(preview_window, guide_title())
 end
 
 function M.refresh_preview(opts)
   opts = opts or {}
-  if not preview_enabled or not valid_window(preview_window) then
+  if (not preview_enabled and not help_visible) or not valid_window(preview_window) then
     return
   end
+  if help_visible then
+    render_guide()
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(preview_buffer, namespace, 0, -1)
   local agent = selected_agent()
   if not agent then
     if preview_target ~= false then
@@ -257,44 +346,6 @@ local function render_guidance(lines, err)
   end
 end
 
-local function help_lines(width)
-  local lines
-  if width < 28 then
-    lines = {
-      "<CR>/i attach",
-      "p/s prompt",
-      "a start",
-      "R resume",
-      "n rename",
-      "e explain",
-      "v preview",
-      "g lazygit",
-      "d diff",
-      "A all/view",
-      "r refresh",
-      "q close",
-      "? help",
-      "Tab preview",
-      config.get().terminal.return_key .. " return",
-    }
-  else
-    lines = {
-      "<CR>/i attach   p/s prompt",
-      "a start         n rename",
-      "R resume session",
-      "e explain       v preview",
-      "g lazygit       d diff",
-      "A all/view      r refresh",
-      "q close         ? help",
-      "Tab focus preview",
-      config.get().terminal.return_key .. " return from terminal",
-    }
-  end
-  return vim.tbl_map(function(line)
-    return truncate(line, math.max(1, width - 1))
-  end, lines)
-end
-
 function M.render()
   if not valid_buffer(list_buffer) then
     return
@@ -355,15 +406,6 @@ function M.render()
         highlights[#lines] = highlight_for[agent.status]
       end
       table.insert(lines, "")
-    end
-  end
-
-  if help_visible then
-    local first_help_line = #lines + 2
-    table.insert(lines, "")
-    vim.list_extend(lines, help_lines(width))
-    for line = first_help_line, #lines do
-      highlights[line] = "SignalboxHelp"
     end
   end
 
@@ -444,6 +486,19 @@ local function toggle_explanation()
   M.refresh_preview({ force = true })
 end
 
+local function toggle_help()
+  help_visible = not help_visible
+  preview_generation = preview_generation + 1
+  preview_target = nil
+  preview_in_flight = nil
+  local needs_preview = preview_enabled or help_visible
+  if valid_window(preview_window) ~= needs_preview then
+    M._reopen_windows()
+  else
+    M._resize_windows()
+  end
+end
+
 local function configure_list_buffer()
   vim.bo[list_buffer].buftype = "nofile"
   vim.bo[list_buffer].bufhidden = "hide"
@@ -487,10 +542,7 @@ local function configure_list_buffer()
     require("signalbox").refresh()
   end, "Refresh agents")
   map("q", M.close, "Close Signalbox")
-  map("?", function()
-    help_visible = not help_visible
-    M.render()
-  end, "Toggle help")
+  map("?", toggle_help, "Toggle input guide")
   map("<Tab>", function()
     if valid_window(preview_window) then
       vim.api.nvim_set_current_win(preview_window)
@@ -553,10 +605,7 @@ local function configure_preview_buffer()
     require("signalbox").refresh()
   end, vim.tbl_extend("force", opts, { desc = "Refresh agents" }))
   vim.keymap.set("n", "q", M.close, vim.tbl_extend("force", opts, { desc = "Close Signalbox" }))
-  vim.keymap.set("n", "?", function()
-    help_visible = not help_visible
-    M.render()
-  end, vim.tbl_extend("force", opts, { desc = "Toggle help" }))
+  vim.keymap.set("n", "?", toggle_help, vim.tbl_extend("force", opts, { desc = "Toggle input guide" }))
   vim.keymap.set("n", "<Tab>", function()
     if valid_window(list_window) then
       vim.api.nvim_set_current_win(list_window)
@@ -588,7 +637,7 @@ local function open_windows()
     "CursorLine:CursorLine",
   }, ",")
 
-  if preview_enabled then
+  if preview_enabled or help_visible then
     preview_window = vim.api.nvim_open_win(preview_buffer, false, {
       relative = "editor",
       row = layout.row,
@@ -663,6 +712,7 @@ function M.open()
   end
   origin_root = require("signalbox.context").project_root(0)
   preview_enabled = config.get().board.preview
+  help_visible = false
   preview_mode = "output"
   preview_target = nil
   if not valid_buffer(list_buffer) then
@@ -713,7 +763,8 @@ local function apply_highlights()
   vim.api.nvim_set_hl(0, "SignalboxWorkspace", { link = "Function" })
   vim.api.nvim_set_hl(0, "SignalboxBorder", { link = "FloatBorder" })
   vim.api.nvim_set_hl(0, "SignalboxMuted", { link = "Comment" })
-  vim.api.nvim_set_hl(0, "SignalboxHelp", { link = "Special" })
+  vim.api.nvim_set_hl(0, "SignalboxGuideHeader", { link = "Title" })
+  vim.api.nvim_set_hl(0, "SignalboxGuideKey", { link = "Special" })
 end
 
 function M.setup()

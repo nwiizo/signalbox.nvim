@@ -110,7 +110,7 @@ h.test("board renders grouped agents in attention order with local mappings", fu
   board._reset()
 end)
 
-h.test("narrow boards keep their labels and help within the visible width", function()
+h.test("narrow boards keep labels within the visible width and wrap guide results", function()
   reset()
   local old_columns = vim.o.columns
   local old_lines = vim.o.lines
@@ -136,6 +136,50 @@ h.test("narrow boards keep their labels and help within the visible width", func
       string.format("narrow line %d should fit the board: %s", line, value)
     )
   end
+  local preview_window = vim.fn.win_findbuf(board._preview_buffer())[1]
+  h.truthy(preview_window ~= nil)
+  h.eq(true, vim.wo[preview_window].wrap)
+  h.truthy(vim.wait(1000, function()
+    return vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, 1, false)[1] == "INPUT → RESULT"
+  end))
+end)
+
+h.test("help opens an input-to-result guide even when the output preview is hidden", function()
+  reset()
+  state._accept({
+    agents = { agent("work", "idle", "w2") },
+    workspaces = { { workspace_id = "w1", label = "editor" }, { workspace_id = "w2", label = "review" } },
+  })
+  board.setup()
+  board.open()
+  vim.fn.maparg("v", "n", false, true).callback()
+  h.eq({}, vim.fn.win_findbuf(board._preview_buffer()))
+
+  vim.fn.maparg("?", "n", false, true).callback()
+
+  local preview_windows = vim.fn.win_findbuf(board._preview_buffer())
+  h.eq(1, #preview_windows)
+  h.truthy(vim.wait(1000, function()
+    return vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, 1, false)[1] == "INPUT → RESULT"
+  end))
+  local guide = table.concat(vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, -1, false), "\n")
+  h.contains(guide, "INPUT")
+  h.contains(guide, "RESULT")
+  h.contains(guide, "<CR> / i")
+  h.contains(guide, "Another Space moves Neovim first")
+  h.contains(guide, config.get().terminal.return_key)
+  h.contains(guide, "agent keeps running")
+  local namespace = vim.api.nvim_get_namespaces()["signalbox-board"]
+  local groups = {}
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(board._preview_buffer(), namespace, 0, -1, { details = true })) do
+    groups[mark[4].hl_group] = true
+  end
+  h.truthy(groups.SignalboxGuideHeader)
+  h.truthy(groups.SignalboxGuideKey)
+
+  vim.fn.maparg("?", "n", false, true).callback()
+  h.eq({}, vim.fn.win_findbuf(board._preview_buffer()))
+  board._reset()
 end)
 
 h.test("board toggles between recent output and Herdr detection explanation", function()
@@ -191,6 +235,30 @@ h.test("rapid explanation toggles cannot let stale callbacks replace the final o
   pending.explain[1]({ code = 0, stdout = "stale explanation", stderr = "" })
   pending.output[1]({ code = 0, stdout = "stale recent output", stderr = "" })
   h.eq({ "final recent output" }, vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, -1, false))
+  board._reset()
+end)
+
+h.test("an in-flight output read cannot replace the operation guide", function()
+  reset()
+  state._accept({ agents = { agent("work", "working") }, workspaces = { { workspace_id = "w1", label = "one" } } })
+  local pending
+  client._set_runner(function(argv, _, callback)
+    if argv[2] == "agent" and argv[3] == "read" then
+      pending = callback
+    end
+  end)
+  board.setup()
+  board.open()
+  h.truthy(vim.wait(1000, function()
+    return pending ~= nil
+  end))
+
+  vim.fn.maparg("?", "n", false, true).callback()
+  h.truthy(vim.wait(1000, function()
+    return vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, 1, false)[1] == "INPUT → RESULT"
+  end))
+  pending({ code = 0, stdout = "stale agent output", stderr = "" })
+  h.eq("INPUT → RESULT", vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, 1, false)[1])
   board._reset()
 end)
 
