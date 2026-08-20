@@ -48,6 +48,6 @@ Signalbox stores no transcript and no duplicate session database. `terminal_id` 
 
 ## Milestones
 
-- v0.1: Herdr 0.7.5+ lifecycle (verified through 0.8.0), focused float, preview, context, native attach, Lazygit/Diffview actions.
+- v0.1: Herdr 0.7.5+ lifecycle (verified through 0.8.2), focused float, preview, context, native attach, Lazygit/Diffview actions.
 - v0.2: raw Unix-socket event subscription with reconnect, snapshot re-bootstrap, and polling fallback.
 - Later: opt-in structured review adapters; no automatic all-agent context broadcast.

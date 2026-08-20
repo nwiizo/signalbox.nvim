@@ -37,12 +37,12 @@ That job shapes the product:
 - One-key Herdr state explanation with matched detection rule and evidence
 - Stable role names for agents discovered outside Signalbox
 - Notifications when an agent becomes blocked or completes work
-- Herdr 0.8.0-verified workspace/tab creation and persistent Codex/Claude launches
+- Herdr 0.8.2-verified workspace/tab creation and persistent Codex/Claude launches
 - Conversation rehoming through the native Claude Code and Codex resume pickers
 - Direct attach in a native right-hand Neovim terminal
 - Cross-Space attach that moves Neovim's Herdr pane to the selected agent's Space
 - Prompt, file, visual selection, range, and LSP diagnostic context
-- Transient retry drafts when a provider update or setup screen intercepts the initial instruction
+- Transient retry drafts when Herdr reports that an initial instruction stalled
 - Optional `Snacks.lazygit` and Diffview actions from the selected agent's cwd
 - Compact attention-only status component and `:checkhealth signalbox`, including detection-manifest freshness
 - Pure Lua with no required Neovim plugin dependency
@@ -136,6 +136,8 @@ The default view keeps agents from the current Git root and also surfaces blocke
 Press `?` for an `INPUT → RESULT` guide that explains the text or key to enter and the resulting action, including cross-Space attach and returning from an attached terminal. If the recent-output preview is hidden, the guide opens the right pane temporarily; pressing `?` again restores the previous preview setting.
 
 Codex or Claude Code may show an update, trust, hook, login, or other setup screen before it can accept an instruction. Signalbox asks Herdr to confirm that the initial prompt made the agent start working. If Herdr reports `agent_prompt_stalled`, Signalbox warns immediately and keeps the instruction in memory. Clear the provider screen, return with `<C-g>`, select the agent, and press `p`; the original instruction is already filled in, so Enter retries it. The draft is discarded once work begins and is never written to disk.
+
+Herdr 0.8.2 can still misclassify the first Codex trust screen with some Codex versions. In that case, accepting trust may look like a successful working transition even though the instruction was not delivered, so no retry draft is available. Finish the trust screen in the attached terminal and resend the instruction. Signalbox does not duplicate Herdr's provider-screen detection.
 
 The right pane is deliberately a read-only, ephemeral view of recent output. Its title says `read-only`; press `i` or `<CR>` from either pane to replace the board with an interactive Herdr terminal in insert mode.
 
@@ -250,7 +252,7 @@ agents = {
 
 ## Herdr upgrade monitoring
 
-The repository checks the canonical `herdrdev/herdr` latest stable release daily. If it differs from the currently verified Herdr version (currently 0.8.0), GitHub Actions opens a deduplicated compatibility-audit issue with CLI, schema, and real-agent smoke-test checkpoints. See [the upstream audit runbook](docs/upstream-herdr.md).
+The repository checks the canonical `herdrdev/herdr` latest stable release daily. If it differs from the currently verified Herdr version (currently 0.8.2), GitHub Actions opens a deduplicated compatibility-audit issue with CLI, schema, and real-agent smoke-test checkpoints. See [the upstream audit runbook](docs/upstream-herdr.md).
 
 See [the design notes](docs/design.md) for the job model and ownership boundary.
 
