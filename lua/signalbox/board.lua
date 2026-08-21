@@ -40,6 +40,18 @@ local function valid_window(window)
   return window and vim.api.nvim_win_is_valid(window)
 end
 
+local function focus_list_window()
+  if valid_window(list_window) then
+    vim.api.nvim_set_current_win(list_window)
+  end
+end
+
+local function focus_preview_window()
+  if valid_window(preview_window) then
+    vim.api.nvim_set_current_win(preview_window)
+  end
+end
+
 function M.is_open()
   return valid_window(list_window)
 end
@@ -124,7 +136,7 @@ end
 local function summary_title()
   local counts = state.counts()
   local markers = config.get().board.markers
-  local parts = { { " Signalbox ", "SignalboxTitle" } }
+  local parts = { { " [1]-Signalbox ", "SignalboxTitle" } }
   for _, key in ipairs({ "blocked", "working", "done" }) do
     if counts[key] > 0 then
       table.insert(parts, { " " .. markers[key] .. counts[key] .. " ", highlight_for[key] })
@@ -177,25 +189,30 @@ local function preview_title(agent, suffix_group)
   local hint = preview_mode == "explain" and "· detection · e output · i attach · ? guide "
     or "· read-only · e explain · i attach · ? guide "
   return {
-    { " " .. agent.name .. " ", highlight_for[agent.status] },
+    { " [2]-Preview ", "SignalboxTitle" },
+    { "· " .. agent.name .. " ", highlight_for[agent.status] },
     { hint, suffix_group or "SignalboxMuted" },
   }
 end
 
 local function empty_preview_title()
-  return { { " read-only · select agent · i attach · ? guide ", "SignalboxMuted" } }
+  return {
+    { " [2]-Preview ", "SignalboxTitle" },
+    { "· read-only · select agent · i attach · ? guide ", "SignalboxMuted" },
+  }
 end
 
 local function guide_title()
   return {
-    { " Guide ", "SignalboxTitle" },
-    { "· input → result · ? close ", "SignalboxMuted" },
+    { " [2]-Preview ", "SignalboxTitle" },
+    { "· guide · input → result · ? close ", "SignalboxMuted" },
   }
 end
 
 local function guide_content(width)
   local entries = {
     { key = "j / k", result = "Select agent; in the right pane, scroll." },
+    { key = "1 / 2", result = "Focus agent list / right pane." },
     { key = "<Tab>", result = "Switch between list and right pane." },
     { heading = "SELECTED AGENT" },
     { key = "<CR> / i", result = "Attach; Another Space moves Neovim first." },
@@ -543,11 +560,9 @@ local function configure_list_buffer()
   end, "Refresh agents")
   map("q", M.close, "Close Signalbox")
   map("?", toggle_help, "Toggle input guide")
-  map("<Tab>", function()
-    if valid_window(preview_window) then
-      vim.api.nvim_set_current_win(preview_window)
-    end
-  end, "Focus read-only preview")
+  map("1", focus_list_window, "Focus agent list")
+  map("2", focus_preview_window, "Focus right pane")
+  map("<Tab>", focus_preview_window, "Focus read-only preview")
 
   vim.api.nvim_create_autocmd("CursorMoved", {
     buffer = list_buffer,
@@ -606,11 +621,9 @@ local function configure_preview_buffer()
   end, vim.tbl_extend("force", opts, { desc = "Refresh agents" }))
   vim.keymap.set("n", "q", M.close, vim.tbl_extend("force", opts, { desc = "Close Signalbox" }))
   vim.keymap.set("n", "?", toggle_help, vim.tbl_extend("force", opts, { desc = "Toggle input guide" }))
-  vim.keymap.set("n", "<Tab>", function()
-    if valid_window(list_window) then
-      vim.api.nvim_set_current_win(list_window)
-    end
-  end, vim.tbl_extend("force", opts, { desc = "Focus agent list" }))
+  vim.keymap.set("n", "1", focus_list_window, vim.tbl_extend("force", opts, { desc = "Focus agent list" }))
+  vim.keymap.set("n", "2", focus_preview_window, vim.tbl_extend("force", opts, { desc = "Focus right pane" }))
+  vim.keymap.set("n", "<Tab>", focus_list_window, vim.tbl_extend("force", opts, { desc = "Focus agent list" }))
 end
 
 local function open_windows()

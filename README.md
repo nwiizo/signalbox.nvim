@@ -102,7 +102,7 @@ Open the board with `:Signalbox`.
 </p>
 
 ```text
-╭──────── Signalbox  !1  ✓1 ────────╮ ╭──────── reviewer · read-only ────────────╮
+╭───── [1]-Signalbox  !1  ✓1 ───────╮ ╭───── [2]-Preview · reviewer · read-only ─╮
 │ this project + attention elsewhere │ │ ...                                      │
 │ A: 2 working elsewhere             │ │ The agent is waiting for approval to     │
 │ signalbox.nvim                     │ │ update the public API.                   │
@@ -129,6 +129,7 @@ Board mappings are buffer-local:
 | `r`          | Refresh immediately                                                                           |
 | `q`          | Close                                                                                         |
 | `?`          | Replace the right pane with an input-to-result operation guide                                |
+| `1` / `2`    | Focus the numbered agent-list / right pane directly                                           |
 | `<Tab>`      | Move between the agent list and the right pane                                                |
 
 The default view keeps agents from the current Git root and also surfaces blocked or completed work elsewhere. When active work is filtered out, the second line shows `A: N working elsewhere`; press `A` to reveal the whole Herdr session.

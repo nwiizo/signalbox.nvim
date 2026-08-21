@@ -38,6 +38,14 @@ local function reset()
   end)
 end
 
+local function window_title(window)
+  local chunks = {}
+  for _, chunk in ipairs(vim.api.nvim_win_get_config(window).title) do
+    table.insert(chunks, chunk[1])
+  end
+  return table.concat(chunks)
+end
+
 h.test("board renders grouped agents in attention order with local mappings", function()
   reset()
   state._accept({
@@ -110,6 +118,47 @@ h.test("board renders grouped agents in attention order with local mappings", fu
   board._reset()
 end)
 
+h.test("numbered panel titles and digit mappings focus the requested panel", function()
+  reset()
+  state._accept({ agents = { agent("work", "idle") }, workspaces = { { workspace_id = "w1", label = "one" } } })
+  board.setup()
+  board.open()
+
+  local list_window = vim.api.nvim_get_current_win()
+  local preview_window = vim.fn.win_findbuf(board._preview_buffer())[1]
+  h.contains(window_title(list_window), "[1]-Signalbox")
+  h.contains(window_title(preview_window), "[2]-Preview")
+
+  local list_focus_preview
+  vim.api.nvim_buf_call(board._buffer(), function()
+    h.truthy(vim.fn.maparg("1", "n", false, true).buffer == 1)
+    list_focus_preview = vim.fn.maparg("2", "n", false, true)
+    h.truthy(list_focus_preview.buffer == 1)
+  end)
+  local preview_focus_list
+  vim.api.nvim_buf_call(board._preview_buffer(), function()
+    preview_focus_list = vim.fn.maparg("1", "n", false, true)
+    h.truthy(preview_focus_list.buffer == 1)
+    h.truthy(vim.fn.maparg("2", "n", false, true).buffer == 1)
+  end)
+
+  list_focus_preview.callback()
+  h.eq(preview_window, vim.api.nvim_get_current_win())
+  preview_focus_list.callback()
+  h.eq(list_window, vim.api.nvim_get_current_win())
+
+  vim.fn.maparg("?", "n", false, true).callback()
+  h.truthy(vim.wait(1000, function()
+    return window_title(preview_window):find("[2]-Preview", 1, true) ~= nil
+  end))
+  vim.fn.maparg("?", "n", false, true).callback()
+  vim.fn.maparg("v", "n", false, true).callback()
+  local list_only_window = vim.api.nvim_get_current_win()
+  vim.fn.maparg("2", "n", false, true).callback()
+  h.eq(list_only_window, vim.api.nvim_get_current_win())
+  board._reset()
+end)
+
 h.test("narrow boards keep labels within the visible width and wrap guide results", function()
   reset()
   local old_columns = vim.o.columns
@@ -165,6 +214,7 @@ h.test("help opens an input-to-result guide even when the output preview is hidd
   local guide = table.concat(vim.api.nvim_buf_get_lines(board._preview_buffer(), 0, -1, false), "\n")
   h.contains(guide, "INPUT")
   h.contains(guide, "RESULT")
+  h.contains(guide, "1 / 2")
   h.contains(guide, "<CR> / i")
   h.contains(guide, "Another Space moves Neovim first")
   h.contains(guide, config.get().terminal.return_key)
