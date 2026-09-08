@@ -793,6 +793,74 @@ h.test("client rejects a reachable but incompatible Herdr server", function()
   end)
 end)
 
+for _, case in ipairs({
+  { endpoint = "yes", protocol = "22", private = "yes", accepted = true },
+  { endpoint = "yes", protocol = "21", private = "no", accepted = true },
+  { endpoint = "yes", protocol = "unknown", private = "unknown", accepted = true },
+  { endpoint = "no", protocol = "22", private = "yes", accepted = false },
+  { endpoint = "unknown", protocol = "22", private = "yes", accepted = false },
+}) do
+  h.test(
+    "client uses endpoint compatibility with private protocol " .. case.protocol .. "/" .. case.endpoint,
+    function()
+      reset()
+      client._set_runner(function(_, _, callback)
+        callback({
+          code = 0,
+          stdout = "status: running\nversion: 0.9.0\nendpoint_compatible: "
+            .. case.endpoint
+            .. "\nprivate_protocol: "
+            .. case.protocol
+            .. "\nprivate_protocol_compatible: "
+            .. case.private
+            .. "\n",
+          stderr = "",
+        })
+      end)
+      client._set_job_starter(function()
+        error("a running server must not be restarted")
+      end)
+      local called = false
+      client.ensure_server(function(ok, err)
+        called = true
+        h.eq(case.accepted, ok)
+        if case.accepted then
+          h.eq(nil, err)
+        else
+          h.eq("protocol", err.kind)
+        end
+      end)
+      h.truthy(called)
+    end
+  )
+end
+
+h.test("client update-all leaves an endpoint-compatible server with unknown private protocol running", function()
+  reset()
+  local calls = {}
+  client._set_runner(function(argv, _, callback)
+    table.insert(calls, vim.deepcopy(argv))
+    h.truthy(argv[3] ~= "live-handoff", "an endpoint-compatible server must not be handed off")
+    local output = ""
+    if argv[2] == "status" then
+      output =
+        "status: running\nendpoint_compatible: yes\nprivate_protocol: unknown\nprivate_protocol_compatible: unknown\n"
+    end
+    callback({ code = 0, stdout = output, stderr = "" })
+  end)
+  local result, err
+  client.update_all({}, function(value, failure)
+    result, err = value, failure
+  end)
+  h.eq(nil, err)
+  h.eq({ server = "current", integrations = {}, manifests = true }, result)
+  h.eq({
+    { "herdr", "status", "server" },
+    { "herdr", "integration", "status" },
+    { "herdr", "server", "update-agent-manifests" },
+  }, calls)
+end)
+
 h.test("client update-all skips a compatible server and updates stale integrations before manifests", function()
   reset()
   config.setup()

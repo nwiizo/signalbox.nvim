@@ -37,7 +37,7 @@ That job shapes the product:
 - One-key Herdr state explanation with matched detection rule and evidence
 - Stable role names for agents discovered outside Signalbox
 - Notifications when an agent becomes blocked or completes work
-- Herdr 0.8.2-verified workspace/tab creation and persistent Codex/Claude launches
+- Herdr 0.9.0-verified workspace/tab creation and persistent Codex/Claude launches
 - Conversation rehoming through the native Claude Code and Codex resume pickers
 - Direct attach in a native right-hand Neovim terminal
 - Cross-Space attach that moves Neovim's Herdr pane to the selected agent's Space
@@ -138,7 +138,7 @@ Press `?` for an `INPUT → RESULT` guide that explains the text or key to enter
 
 Codex or Claude Code may show an update, trust, hook, login, or other setup screen before it can accept an instruction. Signalbox asks Herdr to confirm that the initial prompt made the agent start working. If Herdr reports `agent_prompt_stalled`, Signalbox warns immediately and keeps the instruction in memory. Clear the provider screen, return with `<C-g>`, select the agent, and press `p`; the original instruction is already filled in, so Enter retries it. The draft is discarded once work begins and is never written to disk.
 
-Herdr 0.8.2 can still misclassify the first Codex trust screen with some Codex versions. In that case, accepting trust may look like a successful working transition even though the instruction was not delivered, so no retry draft is available. Finish the trust screen in the attached terminal and resend the instruction. Signalbox does not duplicate Herdr's provider-screen detection.
+Herdr can still misclassify the first Codex trust screen with some Codex versions; this was reproduced with Herdr 0.9.0 and Codex 0.153.4. In that case, accepting trust may look like a successful working transition even though the instruction was not delivered, so no retry draft is available. Finish the trust screen in the attached terminal and resend the instruction. Signalbox does not duplicate Herdr's provider-screen detection.
 
 The right pane is deliberately a read-only, ephemeral view of recent output. Its title says `read-only`; press `i` or `<CR>` from either pane to replace the board with an interactive Herdr terminal in insert mode.
 
@@ -174,7 +174,7 @@ After confirmation, Signalbox creates a Herdr-managed pane, opens the provider's
 
 `:checkhealth signalbox` reads Herdr's active detection-manifest status without changing it. A missing check time or one older than seven days is a warning with the explicit `herdr server update-agent-manifests` recovery command; local overrides are reported separately because they intentionally shadow remote rules.
 
-`:SignalboxUpdateAll` is the explicit maintenance path. It preserves panes by live-handoffing only when the running server protocol is incompatible, installs outdated or missing Codex/Claude integrations that are present in `agents`, then updates Herdr's detection manifests. It does not install or upgrade the Herdr binary because Signalbox does not own its package manager.
+`:SignalboxUpdateAll` is the explicit maintenance path. It preserves panes by live-handoffing only when the running server is incompatible, installs outdated or missing Codex/Claude integrations that are present in `agents`, then updates Herdr's detection manifests. With Herdr 0.9+, endpoint compatibility determines whether the server can stay running, independently of its private protocol version; older clients retain their protocol check. It does not install or upgrade the Herdr binary because Signalbox does not own its package manager.
 
 ## Ambient status
 
@@ -248,12 +248,13 @@ agents = {
 - Resume rehomes saved conversation state, not a running process; stop the original client before selecting its session.
 - Current-project filtering uses the Git root. Outside a Git worktree, Signalbox matches the exact working directory.
 - Signalbox currently refreshes snapshots on a short adaptive poll. Herdr socket events are the next transport milestone.
+- Signalbox observes one Herdr server selected by the CLI environment. Herdr 0.9's combined Local/SSH machine list is not aggregated into the board; switching machines in Herdr does not retarget Signalbox.
 - Agent-to-Neovim MCP tools and native diff review are deliberately out of scope for v0.1.
 - Windows is not supported in v0.1.
 
 ## Herdr upgrade monitoring
 
-The repository checks the canonical `herdrdev/herdr` latest stable release daily. If it differs from the currently verified Herdr version (currently 0.8.2), GitHub Actions opens a deduplicated compatibility-audit issue with CLI, schema, and real-agent smoke-test checkpoints. See [the upstream audit runbook](docs/upstream-herdr.md).
+The repository checks the canonical `herdrdev/herdr` latest stable release daily. If it differs from the currently verified Herdr version (currently 0.9.0), GitHub Actions opens a deduplicated compatibility-audit issue with CLI, schema, and real-agent smoke-test checkpoints. See [the upstream audit runbook](docs/upstream-herdr.md).
 
 See [the design notes](docs/design.md) for the job model and ownership boundary.
 

@@ -2,7 +2,23 @@
 
 Signalbox treats Herdr's CLI and snapshot schema as an upstream contract. A scheduled GitHub Actions workflow checks the canonical `herdrdev/herdr` latest stable release every day. When its tag differs from Signalbox's verified version, the workflow opens one compatibility-audit issue for that tag, including closed issues in duplicate detection.
 
-The currently verified release is **Herdr 0.8.2** (protocol 20). Signalbox still accepts Herdr 0.7.5 or newer.
+The currently verified release is **Herdr 0.9.0** (endpoint generation 1, private protocol 22). Signalbox still accepts Herdr 0.7.5 or newer.
+
+## Herdr 0.9.0 audit
+
+[Herdr 0.9.0](https://github.com/herdrdev/herdr/releases/tag/v0.9.0) separates stable endpoint compatibility from its private wire protocol. `status server` now reports `endpoint_compatible`, `private_protocol`, and `private_protocol_compatible` instead of the former `protocol` and `compatible` fields. Signalbox parses complete field names and shares this check between startup, maintenance, and health. An explicit endpoint `yes` keeps the server running even when its private protocol differs or is unknown; endpoint `no` or `unknown` cannot be overridden by private-protocol compatibility. Herdr 0.7.5–0.8.2 clients retain the legacy check.
+
+The consumed snapshot fields and lifecycle CLI arguments remain compatible. Herdr still owns prompt submission and its five-second activity check, recent/visible terminal reads, provider detection, and native session persistence. Signalbox keeps its six-second prompt wait and eight-second process ceiling. The CLI help and release source were inspected for snapshot, start, prompt, read, explain, rename, attach, workspace/tab creation, pane targeting/move, and manifest status. No new snapshot normalization or provider-specific shim is needed.
+
+Herdr's combined Local/SSH machine list belongs to its client UI. Signalbox continues to observe one server through the inherited CLI session/socket environment. IDs and names remain scoped to that server; switching machines in Herdr does not retarget commands from an existing pane. Multi-machine aggregation is outside this audit. Signalbox still polls snapshots, so the change to live-only lifecycle event subscriptions does not affect it.
+
+The macOS arm64 smoke test used a checksum-verified 0.9.0 release binary, isolated config/state/socket paths, Codex 0.153.4, and Claude Code 2.1.261. Both providers started through Signalbox's tab allocation and accepted prompts through `prompt_until_working`. Snapshot normalization, active/idle preview, explanation, rename, board rendering and explanation switching, and a live Neovim terminal attach were exercised against the disposable server. Closing the Neovim attach left the agents available. Moving a disposable shell pane to another workspace retained its terminal ID. A Codex `/status` submission returned structured `agent_prompt_stalled` through Signalbox's existing error path after five seconds.
+
+Health accepted the 0.9.0 server and current detection manifests (Codex 2026.09.05.1, Claude 2026.09.04.1). Existing v7 provider integrations were left in place; health correctly recommended Codex v8 and Claude v9. A separate disposable 0.8.2 server with a shell workspace was upgraded through `update_all`, returning `handed_off`; its next snapshot reported 0.9.0 and retained the workspace. Both initial test servers and their panes were stopped afterward. See the [extended remote and workflow validation](herdr-0.9.0-validation.md) for SSH reconnects, multiple clients, resume pickers, maintenance, and the attach-warning fix found during those tests.
+
+The first-run Codex trust-screen limitation remains reproducible: `agent start` reported idle/ready while the trust question was visible; the first prompt accepted trust and reported working without delivering the instruction. Resending after startup produced the expected reply. This extends the 0.8.2 observation below; complete the trust screen and resend when it occurs.
+
+Regression tests cover endpoint/private-protocol disagreement, unknown private protocols, preserving compatible servers during maintenance, and matching health results. Local `make check` and the Linux `act` matrix for Neovim v0.10.4 and stable passed. The local runner needed an isolated `DOCKER_CONFIG` because the configured desktop credential helper was absent, plus an explicit container Node path; the workflow and pinned tools were unchanged.
 
 ## Herdr 0.8.2 audit
 

@@ -1,6 +1,52 @@
 local h = require("tests.harness")
 local health = require("signalbox.health")
 
+for _, endpoint in ipairs({ "yes", "no", "unknown" }) do
+  h.test("health respects endpoint compatibility " .. endpoint .. " over private protocol compatibility", function()
+    local original_system = vim.system
+    local original_health = {}
+    local reports = {}
+    h.defer(function()
+      vim.system = original_system
+      for name, handler in pairs(original_health) do
+        vim.health[name] = handler
+      end
+      require("signalbox.config")._reset()
+    end)
+    for _, name in ipairs({ "start", "ok", "warn", "error", "info" }) do
+      original_health[name] = vim.health[name]
+      vim.health[name] = function(message)
+        reports[message] = name
+      end
+    end
+    require("signalbox.config").setup({ herdr_cmd = vim.v.progpath })
+    vim.system = function(argv)
+      local output = ""
+      if argv[2] == "--version" then
+        output = "herdr " .. require("signalbox.compatibility").verified_herdr_string
+      elseif argv[2] == "status" then
+        output = "status: running\nendpoint_compatible: "
+          .. endpoint
+          .. "\nprivate_protocol: 22\nprivate_protocol_compatible: yes\n"
+      elseif argv[2] == "server" then
+        output = '{"result":{"manifests":[]}}'
+      end
+      return {
+        wait = function()
+          return { code = 0, stdout = output, stderr = "" }
+        end,
+      }
+    end
+    health.check()
+    if endpoint == "yes" then
+      h.eq("ok", reports["Herdr server is running and compatible with this client"])
+    else
+      h.eq(nil, reports["Herdr server is running and compatible with this client"])
+      h.eq("warn", reports["Herdr server responded but did not report compatibility with this client"])
+    end
+  end)
+end
+
 h.test("health parses configured Herdr detection manifest status", function()
   local manifests, err = health._parse_manifest_status(vim.json.encode({
     id = "cli:server:agent-manifests",

@@ -199,14 +199,15 @@ function M.check()
 
     ok, stdout, stderr = run({ config.herdr_cmd, "status", "server" })
     if ok then
-      if stdout:match("status:%s*not running") then
+      local status_kind = compatibility.parse_server_status(stdout)
+      if status_kind == "not_running" then
         health.warn("Herdr server is not running", {
           "Run: " .. config.herdr_cmd .. " server",
         })
-      elseif stdout:find("compatible: yes", 1, true) then
-        health.ok("Herdr server is running with a compatible protocol")
+      elseif status_kind == "compatible" then
+        health.ok("Herdr server is running and compatible with this client")
       else
-        health.warn("Herdr server responded but did not report protocol compatibility")
+        health.warn("Herdr server responded but did not report compatibility with this client")
       end
     else
       health.warn("Herdr server is not reachable: " .. stderr:gsub("%s+$", ""), {

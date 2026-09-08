@@ -1,4 +1,5 @@
 local config = require("signalbox.config")
+local compatibility = require("signalbox.compatibility")
 
 local M = {}
 
@@ -601,17 +602,6 @@ local function integration_is_current(output, name)
   return false
 end
 
-local function parse_server_status(output)
-  if output:match("status:%s*not running") then
-    return "not_running"
-  end
-  local protocol = tonumber(output:match("protocol:%s*(%d+)"))
-  if protocol and output:match("compatible:%s*yes") then
-    return "compatible"
-  end
-  return "incompatible"
-end
-
 local check_server
 
 function M.update_all(integrations, callback)
@@ -711,7 +701,7 @@ function M.update_all(integrations, callback)
       return
     end
     local output = status.stdout or ""
-    local status_kind = parse_server_status(output)
+    local status_kind = compatibility.parse_server_status(output)
     if status_kind == "not_running" then
       ensure_running_server()
     elseif status_kind == "compatible" then
@@ -760,7 +750,7 @@ check_server = function(callback)
       return
     end
     local output = result.stdout or ""
-    local status_kind = parse_server_status(output)
+    local status_kind = compatibility.parse_server_status(output)
     if status_kind == "not_running" then
       callback(false, { kind = "server", message = "Herdr server is not running" })
       return
@@ -768,7 +758,7 @@ check_server = function(callback)
     if status_kind ~= "compatible" then
       callback(false, {
         kind = "protocol",
-        message = "Herdr did not report a compatible protocol; update Herdr and run :checkhealth signalbox",
+        message = "Herdr did not report compatibility with this client; update Herdr and run :checkhealth signalbox",
       })
       return
     end

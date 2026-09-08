@@ -73,7 +73,12 @@ function M.attach(agent, opts)
   vim.bo[bufnr].swapfile = false
   vim.b[bufnr].signalbox_terminal_id = agent.terminal_id
   install_return_mapping(bufnr)
+  local attach_output = ""
   local job_id, attach_err = client.attach(agent.target or agent.pane_id, opts.takeover == true, {
+    on_stdout = function(_, data)
+      -- Keep diagnostics intact before terminal wrapping and blank-row padding.
+      attach_output = (attach_output .. table.concat(data, "\n")):sub(-4096)
+    end,
     on_exit = function(_, code)
       vim.schedule(function()
         local record = terminals[agent.terminal_id]
@@ -82,17 +87,13 @@ function M.attach(agent, opts)
           terminals[agent.terminal_id] = nil
         end
         if unexpected and code ~= 0 and vim.v.exiting == vim.NIL then
-          local output = ""
-          if vim.api.nvim_buf_is_valid(bufnr) then
-            local line_count = vim.api.nvim_buf_line_count(bufnr)
-            output = table.concat(vim.api.nvim_buf_get_lines(bufnr, math.max(0, line_count - 8), -1, false), "\n")
-          end
-          local lower = output:lower()
+          local lower = attach_output:lower()
           if lower:find("takeover", 1, true) or lower:find("another client", 1, true) then
             vim.notify(
               string.format(
-                "Herdr attach for %s is owned by another client; use :SignalboxAttach! to take over",
-                agent.name
+                "Herdr attach for %s is owned by another client; use :SignalboxAttach! %s to take over",
+                agent.name,
+                agent.terminal_id
               ),
               vim.log.levels.WARN,
               { title = "Signalbox" }

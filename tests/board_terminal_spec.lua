@@ -570,6 +570,62 @@ h.test("terminal cleanup stops attach clients without closing Herdr agents", fun
   terminal._reset()
 end)
 
+for _, case in ipairs({
+  { chunks = { "herdr: terminal already has an attached client; retry with --takeo", "ver\n" }, takeover = true },
+  { chunks = { "herdr: connection refused\n" }, takeover = false },
+}) do
+  h.test(
+    "terminal reports attach failures despite wrapping and blank terminal rows: " .. tostring(case.takeover),
+    function()
+      reset()
+      local original_notify = vim.notify
+      h.defer(function()
+        terminal._reset()
+        vim.notify = original_notify
+      end)
+      local notices = {}
+      vim.notify = function(message, level)
+        table.insert(notices, { message = message, level = level })
+      end
+      local callbacks
+      terminal._set_termopen(function(_, opts)
+        callbacks = opts
+        return 17
+      end)
+      local bufnr = terminal.attach(agent("term_1", "idle"))
+      h.defer(function()
+        if vim.api.nvim_buf_is_valid(bufnr) then
+          vim.api.nvim_buf_delete(bufnr, { force = true })
+        end
+      end)
+      local rendered =
+        { "herdr: terminal already has an", "attached client; retry with --takeo", "ver", "[Process exited 1]" }
+      for _ = 1, 20 do
+        table.insert(rendered, "")
+      end
+      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, rendered)
+      if callbacks.on_stdout then
+        for _, chunk in ipairs(case.chunks) do
+          callbacks.on_stdout(17, vim.split(chunk, "\n", { plain = true }))
+        end
+      end
+      callbacks.on_exit(17, 1)
+      h.truthy(vim.wait(1000, function()
+        return #notices > 0
+      end))
+      h.eq(1, #notices)
+      h.eq(false, terminal.is_attached("term_1"))
+      if case.takeover then
+        h.contains(notices[1].message, ":SignalboxAttach! term_1")
+        h.eq(vim.log.levels.WARN, notices[1].level)
+      else
+        h.contains(notices[1].message, ":SignalboxHealth")
+        h.eq(vim.log.levels.WARN, notices[1].level)
+      end
+    end
+  )
+end
+
 h.test("attached terminals use a Neovim-owned chord to detach and return to the board", function()
   reset()
   state._accept({ agents = { agent("term_1", "idle") }, workspaces = { { workspace_id = "w1", label = "one" } } })
