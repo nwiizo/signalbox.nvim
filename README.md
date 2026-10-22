@@ -37,7 +37,7 @@ That job shapes the product:
 - One-key Herdr state explanation with matched detection rule and evidence
 - Stable role names for agents discovered outside Signalbox
 - Notifications when an agent becomes blocked or completes work
-- Herdr 0.9.0-verified workspace/tab creation and persistent Codex/Claude launches
+- Herdr 0.9.5-verified lifecycle commands with persistent Codex/Claude launch presets
 - Conversation rehoming through the native Claude Code and Codex resume pickers
 - Direct attach in a native right-hand Neovim terminal
 - Cross-Space attach that moves Neovim's Herdr pane to the selected agent's Space
@@ -60,6 +60,8 @@ Install Herdr's richer agent integrations once:
 herdr integration install codex
 herdr integration install claude
 ```
+
+When upgrading to Herdr 0.9.5, rerun these commands or use `:SignalboxUpdateAll` to refresh existing integrations. Codex integration v10 keeps session tracking but removes turn hooks; Herdr detects Codex status from the terminal screen. Claude integration v11 fixes reporting in named sessions.
 
 ## Installation
 
@@ -116,10 +118,12 @@ Board mappings are buffer-local:
 
 | Key          | Action                                                                                        |
 | ------------ | --------------------------------------------------------------------------------------------- |
+| `j` / `k`    | Select the next / previous agent in the list, skipping headings; scroll in the right pane     |
 | `<CR>` / `i` | Leave the read-only preview and attach to the selected agent's interactive terminal           |
-| `p` / `s`    | Prompt the selected agent; retry a saved initial-instruction draft when one exists          |
+| `p` / `s`    | Prompt the selected agent; if blocked, show how to attach and answer its dialog                |
 | `e`          | Toggle recent output / Herdr state-detection explanation                                      |
 | `n`          | Give the selected agent a stable role name                                                    |
+| `x`          | Acknowledge the selected completion for this Neovim session                                   |
 | `a`          | Assign an unused project-based name, enter the first instruction, start, and attach            |
 | `R`          | Resume a saved Claude Code or Codex conversation inside a new Herdr-managed agent              |
 | `g`          | Open Snacks Lazygit at the selected agent's repository                                        |
@@ -134,17 +138,41 @@ Board mappings are buffer-local:
 
 The default view keeps agents from the current Git root and also surfaces blocked or completed work elsewhere. When active work is filtered out, the second line shows `A: N working elsewhere`; press `A` to reveal the whole Herdr session.
 
+Space groups are ordered by their most urgent visible agent: blocked, done, working, idle, then unknown. Equal-priority groups keep Herdr's order, and updates preserve the selected terminal.
+
+Use `j` / `k` to move between agents without stopping on Space headings or blank rows. Movement stops at the first or last agent. `1` / `2` remain direct pane switches.
+
+After reviewing a completed agent, press `x` from either pane to hide that completion from the default view and attention counts. `A` still shows it. Opening its preview does not acknowledge it. A new Herdr completion number or an observed transition out of `done` clears the acknowledgement, so its next completion appears again. Herdr 0.9.5 supplies completion numbers, allowing Signalbox to detect work completed between polls and notify once per completion even when the terminal revision stays unchanged. Older servers without this field need an observed transition out of `done`. Acknowledgements stay in memory and reset when Neovim restarts; Herdr's state is unchanged.
+
+An empty board distinguishes no agents, agents outside the current project, reviewed completions, and a failed refresh. It offers the relevant next action and `q` to return to editing. Reviewing all completions does not suggest starting another task.
+
+Before sending an instruction or editor context, Signalbox fetches a fresh snapshot and resolves the same terminal's current pane. If the agent disappears, its kind or registered name changes, or verification fails, nothing is sent. The instruction stays in a memory-only draft buffer; the notification gives a `:buffer N` command to recover it after closing the board. If submission itself fails, delivery may be uncertain: inspect the agent before explicitly retrying. Drafts are never replayed automatically or saved to disk, and are lost when Neovim exits.
+
+For a `blocked` agent, inspect its approval or question in the preview, then press `i` or `<CR>` to answer in its native terminal. Herdr rejects ordinary prompts to blocked agents without sending input. Signalbox checks for this before opening the instruction input and again before sending. If the agent becomes blocked while you write, your text remains in a draft and the notification identifies the attach command. A server-side `agent_blocked` rejection also means the instruction was not sent. See [Herdr's agent input rules](https://herdr.dev/docs/agent-automation/#choose-the-control-surface).
+
 Press `?` for an `INPUT → RESULT` guide that explains the text or key to enter and the resulting action, including cross-Space attach and returning from an attached terminal. If the recent-output preview is hidden, the guide opens the right pane temporarily; pressing `?` again restores the previous preview setting.
+
+Controls depend on the focused window and mode:
+
+| Where you are | Read or enter text | Return or cancel |
+| --- | --- | --- |
+| Board / read-only preview | `j` / `k` selects agents in the list. Press `2` or `<Tab>` for the preview, then `j` / `k` or `<C-d>` / `<C-u>` to scroll. | `q` closes the board; `?` closes its guide. |
+| Instruction / name input | Use the configured input dialog. With default Snacks input keys, Enter confirms or accepts completion first. | In Snacks input, close any completion menu first; Esc leaves Insert mode, then Esc cancels. Cancellation sends nothing. |
+| Agent / provider picker | Use the configured picker keys to select and confirm. | Use its cancel key. The verified LazyVim/Snacks picker closes with Esc; cancellation stops the action. |
+| Attached terminal, input mode | Type into the agent; Page Up / Page Down scroll Herdr history. Normal input returns to the bottom. | `<C-g>` or Herdr's `Ctrl-b`, then `q`, detaches and returns to the board. |
+| Attached terminal, Neovim Normal mode | Enter this mode with `<C-\><C-n>` to select and copy terminal text. | `i` resumes input; `<C-g>` returns to the board. |
+
+Input and picker bindings belong to your configured UI provider; Signalbox keeps them intact. The terminal modes and direct-attach keys follow the [Neovim terminal manual](https://neovim.io/doc/user/terminal/#terminal-input), [Herdr direct-attach guide](https://herdr.dev/docs/agents/#attach-directly-to-an-agent), and [Snacks input defaults](https://github.com/folke/snacks.nvim/blob/main/docs/input.md). In terminal input mode, press `Ctrl-b` twice to send one literal Ctrl-b to the agent. Herdr's native detach returns automatically when its terminal is focused; a background attach client exiting does not interrupt the window you are using.
 
 Codex or Claude Code may show an update, trust, hook, login, or other setup screen before it can accept an instruction. Signalbox asks Herdr to confirm that the initial prompt made the agent start working. If Herdr reports `agent_prompt_stalled`, Signalbox warns immediately and keeps the instruction in memory. Clear the provider screen, return with `<C-g>`, select the agent, and press `p`; the original instruction is already filled in, so Enter retries it. The draft is discarded once work begins and is never written to disk.
 
-Herdr can still misclassify the first Codex trust screen with some Codex versions; this was reproduced with Herdr 0.9.0 and Codex 0.153.4. In that case, accepting trust may look like a successful working transition even though the instruction was not delivered, so no retry draft is available. Finish the trust screen in the attached terminal and resend the instruction. Signalbox does not duplicate Herdr's provider-screen detection.
+Herdr can still misclassify Codex setup screens. The repository trust screen reproduced this with Herdr 0.9.0 / Codex 0.153.4, and the initial hook-review screen did so with Herdr 0.9.5 / Codex 0.163.0. In that case, opening a setup menu may look like a successful working transition even though the instruction was not delivered, so no retry draft is available. Finish setup in the attached terminal and resend the instruction. Signalbox does not duplicate Herdr's provider-screen detection.
 
 The right pane is deliberately a read-only, ephemeral view of recent output. Its title says `read-only`; press `i` or `<CR>` from either pane to replace the board with an interactive Herdr terminal in insert mode.
 
 When Neovim itself runs inside Herdr and the selected agent belongs to another Space, attach first moves the Herdr pane hosting Neovim into that Space and follows it. Herdr keeps the Neovim process running during the move. Neovim instances outside Herdr attach without moving a pane.
 
-Use `<C-g>` (`Ctrl-g`) as the single Signalbox key. In a normal editor buffer it opens the board and starts Herdr on demand; in a Signalbox-attached terminal its buffer-local mapping takes priority, detaches the Neovim client, leaves the Herdr agent running, and returns directly to the board. A single control chord has no mapping timeout in which Codex or Claude Code can consume a partial sequence. The terminal key is configurable with `terminal.return_key`.
+Use `<C-g>` (`Ctrl-g`) as the single Signalbox key. In a normal editor buffer it opens the board and starts Herdr on demand; in a Signalbox-attached terminal its buffer-local mapping takes priority, detaches the Neovim client, leaves the Herdr agent running, and returns to that same agent on the board. If the agent is outside the default filter, the board switches to all agents to reveal it. If it has disappeared, the board selects the first visible agent. A single control chord has no mapping timeout in which Codex or Claude Code can consume a partial sequence. The terminal key is configurable with `terminal.return_key`.
 
 ## Commands
 
@@ -254,7 +282,7 @@ agents = {
 
 ## Herdr upgrade monitoring
 
-The repository checks the canonical `herdrdev/herdr` latest stable release daily. If it differs from the currently verified Herdr version (currently 0.9.0), GitHub Actions opens a deduplicated compatibility-audit issue with CLI, schema, and real-agent smoke-test checkpoints. See [the upstream audit runbook](docs/upstream-herdr.md).
+The repository checks the canonical `herdrdev/herdr` latest stable release daily. If it differs from the currently verified Herdr version (currently 0.9.5), GitHub Actions opens a deduplicated compatibility-audit issue with CLI, schema, and real-agent smoke-test checkpoints. See [the upstream audit runbook](docs/upstream-herdr.md).
 
 See [the design notes](docs/design.md) for the job model and ownership boundary.
 

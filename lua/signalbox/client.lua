@@ -234,6 +234,7 @@ local function normalize_agent(agent, index)
     status = status,
     focused = agent.focused == true,
     revision = type(agent.revision) == "number" and agent.revision or 0,
+    completion_seq = type(agent.completion_seq) == "number" and agent.completion_seq or nil,
     name = tostring(name),
     registered_name = type(registered_name) == "string" and registered_name or nil,
     kind = tostring(kind),

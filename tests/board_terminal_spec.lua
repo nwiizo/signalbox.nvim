@@ -46,6 +46,194 @@ local function window_title(window)
   return table.concat(chunks)
 end
 
+local function selected_terminal()
+  local window = vim.fn.win_findbuf(board._buffer())[1]
+  local selected = board._line_agents()[vim.api.nvim_win_get_cursor(window)[1]]
+  return selected and selected.terminal_id
+end
+
+local function select_terminal(id)
+  local window = vim.fn.win_findbuf(board._buffer())[1]
+  for line, item in pairs(board._line_agents()) do
+    if item.terminal_id == id then
+      vim.api.nvim_win_set_cursor(window, { line, 0 })
+      return
+    end
+  end
+  error("agent is not visible: " .. id)
+end
+
+h.test("list navigation skips headings and stops at either end", function()
+  reset()
+  h.defer(board._reset)
+  state._accept({
+    agents = { agent("first", "blocked"), agent("second", "done"), agent("third", "idle", "w2") },
+    workspaces = { { workspace_id = "w1", label = "one" }, { workspace_id = "w2", label = "two" } },
+  })
+  board.setup()
+  board.open()
+  vim.api.nvim_feedkeys("j", "xt", false)
+  h.eq("second", selected_terminal())
+  vim.api.nvim_feedkeys("j", "xt", false)
+  h.eq("third", selected_terminal())
+  vim.api.nvim_feedkeys("j", "xt", false)
+  h.eq("third", selected_terminal())
+  vim.api.nvim_feedkeys("k", "xt", false)
+  h.eq("second", selected_terminal())
+  vim.api.nvim_feedkeys("9k", "xt", false)
+  h.eq("first", selected_terminal())
+  vim.api.nvim_win_set_cursor(0, { 3, 0 })
+  vim.api.nvim_feedkeys("j", "xt", false)
+  h.eq("first", selected_terminal())
+  vim.api.nvim_buf_call(board._preview_buffer(), function()
+    h.eq({}, vim.fn.maparg("j", "n", false, true))
+    h.eq({}, vim.fn.maparg("k", "n", false, true))
+  end)
+end)
+
+h.test("reopening the board and changing pane layout preserve the selected terminal", function()
+  reset()
+  h.defer(board._reset)
+  local snapshot = {
+    agents = { agent("first", "blocked"), agent("selected", "done", "w2") },
+    workspaces = { { workspace_id = "w1", label = "one" }, { workspace_id = "w2", label = "two" } },
+  }
+  state._accept(snapshot)
+  board.setup()
+  board.open()
+  select_terminal("selected")
+  vim.fn.maparg("v", "n", false, true).callback()
+  h.eq("selected", selected_terminal())
+  board.close()
+  snapshot = vim.deepcopy(snapshot)
+  snapshot.agents[2].workspace_id = "w1"
+  state._accept(snapshot)
+  board.open()
+  h.eq("selected", selected_terminal())
+  board.close()
+  state._accept({
+    agents = { agent("first", "blocked") },
+    workspaces = { { workspace_id = "w1", label = "one" } },
+  })
+  board.open()
+  h.eq("first", selected_terminal())
+end)
+
+for _, target in ipairs({ "selected", "disappeared" }) do
+  h.test("returning to " .. target .. " preserves the attention filter when no reveal is needed", function()
+    reset()
+    h.defer(board._reset)
+    state._accept({
+      agents = { agent("first", "blocked"), agent("selected", "done"), agent("hidden", "working", "w2", "/elsewhere") },
+      workspaces = { { workspace_id = "w1", label = "one" }, { workspace_id = "w2", label = "two" } },
+    })
+    board.setup()
+    board.open({ terminal_id = target })
+    h.eq(target == "selected" and target or "first", selected_terminal())
+    h.contains(vim.api.nvim_buf_get_lines(board._buffer(), 0, 1, false)[1], "this project")
+    for _, item in pairs(board._line_agents()) do
+      h.truthy(item.terminal_id ~= "hidden")
+    end
+  end)
+end
+
+for _, case in ipairs({
+  { name = "unstarted", agents = {}, message = "No agents in this Herdr session.", action = "a: start", start = true },
+  {
+    name = "filtered",
+    agents = { agent("elsewhere", "working", "w2", "/another-project") },
+    message = "No agents match this view.",
+    action = "A: show all agents",
+  },
+  {
+    name = "reviewed here with work elsewhere",
+    agents = { agent("reviewed", "done"), agent("elsewhere", "working", "w2", "/another-project") },
+    acknowledge = true,
+    message = "No agents match this view.",
+    action = "A: show all agents",
+  },
+  {
+    name = "reviewed",
+    agents = { agent("reviewed", "done") },
+    acknowledge = true,
+    message = "All completions reviewed.",
+    action = "A: show reviewed agents",
+  },
+  {
+    name = "stale",
+    agents = { agent("reviewed", "done") },
+    acknowledge = true,
+    stale = true,
+    message = "No agents in the last view.",
+    action = "r: retry",
+  },
+}) do
+  h.test("an empty board explains " .. case.name .. " work without creating unnecessary work", function()
+    reset()
+    h.defer(board._reset)
+    state._accept({
+      agents = case.agents,
+      workspaces = { { workspace_id = "w1", label = "one" }, { workspace_id = "w2", label = "two" } },
+    })
+    if case.acknowledge then
+      state.acknowledge("reviewed")
+    end
+    if case.stale then
+      state._fail({ kind = "process", message = "offline" })
+    end
+    board.setup()
+    board.open()
+    local text = table.concat(vim.api.nvim_buf_get_lines(board._buffer(), 0, -1, false), "\n")
+    h.contains(text, case.message)
+    h.contains(text, case.action)
+    h.contains(text, "q: return to editing")
+    if not case.start then
+      h.truthy(not text:find("start", 1, true))
+    end
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    vim.api.nvim_feedkeys("jk", "xt", false)
+    h.eq(cursor, vim.api.nvim_win_get_cursor(0))
+  end)
+end
+
+h.test("board preserves selection across workspace priority changes and acknowledges from either pane", function()
+  reset()
+  local snapshot = {
+    agents = { agent("work", "working"), agent("other", "idle", "w2") },
+    workspaces = { { workspace_id = "w1", label = "one" }, { workspace_id = "w2", label = "two" } },
+  }
+  state._accept(snapshot)
+  board.setup()
+  board.open()
+  local window = vim.api.nvim_get_current_win()
+  snapshot = vim.deepcopy(snapshot)
+  snapshot.agents[2].status = "blocked"
+  state._accept(snapshot)
+  board.render()
+  h.eq("two", vim.api.nvim_buf_get_lines(board._buffer(), 2, 3, false)[1])
+  h.eq("work", board._line_agents()[vim.api.nvim_win_get_cursor(window)[1]].terminal_id)
+  snapshot = vim.deepcopy(snapshot)
+  snapshot.agents[1].status = "done"
+  state._accept(snapshot)
+  board.render()
+  h.eq(1, state.counts().done)
+  vim.fn.maparg("x", "n", false, true).callback()
+  h.eq(0, state.counts().done)
+  for _, item in pairs(board._line_agents()) do
+    h.truthy(item.terminal_id ~= "work")
+  end
+  vim.api.nvim_buf_call(board._preview_buffer(), function()
+    h.truthy(type(vim.fn.maparg("x", "n", false, true).callback) == "function")
+  end)
+  vim.fn.maparg("A", "n", false, true).callback()
+  local found = false
+  for _, item in pairs(board._line_agents()) do
+    found = found or item.terminal_id == "work"
+  end
+  h.truthy(found)
+  board._reset()
+end)
+
 h.test("board renders grouped agents in attention order with local mappings", function()
   reset()
   state._accept({
@@ -216,7 +404,6 @@ h.test("help opens an input-to-result guide even when the output preview is hidd
   h.contains(guide, "RESULT")
   h.contains(guide, "1 / 2")
   h.contains(guide, "<CR> / i")
-  h.contains(guide, "Another Space moves Neovim first")
   h.contains(guide, config.get().terminal.return_key)
   h.contains(guide, "agent keeps running")
   local namespace = vim.api.nvim_get_namespaces()["signalbox-board"]
@@ -570,6 +757,41 @@ h.test("terminal cleanup stops attach clients without closing Herdr agents", fun
   terminal._reset()
 end)
 
+for _, focused in ipairs({ true, false }) do
+  h.test("native Herdr detach returns to the board only when its terminal is focused: " .. tostring(focused), function()
+    reset()
+    h.defer(function()
+      board._reset()
+      terminal._reset()
+    end)
+    local origin = vim.api.nvim_get_current_win()
+    local target = agent("term_1", "working")
+    state._accept({ agents = { target }, workspaces = { { workspace_id = "w1", label = "one" } } })
+    board.setup()
+    local callbacks
+    terminal._set_termopen(function(_, opts)
+      callbacks = opts
+      return 23
+    end)
+    local bufnr = terminal.attach(target)
+    if not focused then
+      vim.api.nvim_set_current_win(origin)
+    end
+    callbacks.on_exit(23, 0)
+    h.truthy(vim.wait(1000, function()
+      return not terminal.is_attached("term_1")
+    end))
+    if focused then
+      h.truthy(vim.wait(1000, board.is_open))
+      h.eq(false, vim.api.nvim_buf_is_valid(bufnr))
+      h.eq("term_1", selected_terminal())
+    else
+      h.truthy(not board.is_open())
+      h.eq(origin, vim.api.nvim_get_current_win())
+    end
+  end)
+end
+
 for _, case in ipairs({
   { chunks = { "herdr: terminal already has an attached client; retry with --takeo", "ver\n" }, takeover = true },
   { chunks = { "herdr: connection refused\n" }, takeover = false },
@@ -628,11 +850,15 @@ end
 
 h.test("attached terminals use a Neovim-owned chord to detach and return to the board", function()
   reset()
-  state._accept({ agents = { agent("term_1", "idle") }, workspaces = { { workspace_id = "w1", label = "one" } } })
+  local target = agent("term_1", "working", "w2", "/another-project")
+  state._accept({
+    agents = { agent("first", "blocked"), target },
+    workspaces = { { workspace_id = "w1", label = "one" }, { workspace_id = "w2", label = "two" } },
+  })
   terminal._set_termopen(function(_, _)
     return 23
   end)
-  local bufnr = terminal.attach(agent("term_1", "idle"), {})
+  local bufnr = terminal.attach(target, {})
   local normal_mapping
   local terminal_mapping
   local normal_leader_mapping
@@ -652,6 +878,8 @@ h.test("attached terminals use a Neovim-owned chord to detach and return to the 
     return not vim.api.nvim_buf_is_valid(bufnr) and board.is_open()
   end))
   h.eq(false, terminal.is_attached("term_1"))
+  h.eq("term_1", selected_terminal())
+  h.contains(vim.api.nvim_buf_get_lines(board._buffer(), 0, 1, false)[1], "all agents")
   board._reset()
   terminal._reset()
 end)

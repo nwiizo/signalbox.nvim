@@ -211,16 +211,26 @@ end
 
 local function guide_content(width)
   local entries = {
-    { key = "j / k", result = "Select agent; in the right pane, scroll." },
+    { key = "j / k", result = "Next / previous agent; in the right pane, scroll." },
     { key = "1 / 2", result = "Focus agent list / right pane." },
     { key = "<Tab>", result = "Switch between list and right pane." },
+    { key = "<C-d/u>", result = "In the right pane, scroll half a page." },
     { heading = "SELECTED AGENT" },
-    { key = "<CR> / i", result = "Attach; Another Space moves Neovim first." },
-    { key = "p / s", result = "Enter instruction → send to agent." },
+    {
+      key = "<CR> / i",
+      result = "Attach to type or answer approval/question UI."
+        .. (vim.env.HERDR_ENV == "1" and " Cross-Space attach moves Neovim first." or ""),
+    },
+    { key = "p / s", result = "Send instruction; blocked agents need attach first." },
     { key = "e", result = "Show Herdr state evidence." },
     { key = "n", result = "Enter name → rename agent." },
-    { heading = "ATTACHED TERMINAL" },
-    { key = config.get().terminal.return_key, result = "Return to board; agent keeps running." },
+    { key = "x", result = "Acknowledge done → hide until next completion; A shows all." },
+    { heading = "ATTACHED TERMINAL — INPUT MODE" },
+    { key = config.get().terminal.return_key, result = "Detach and select the same agent; agent keeps running." },
+    { key = "PgUp/PgDn", result = "Scroll Herdr history; typing returns to the bottom." },
+    { key = "<C-b> q", result = "Herdr native detach; return to Signalbox." },
+    { key = "<C-b> twice", result = "Send a literal Ctrl-b to the agent." },
+    { key = "<C-\\><C-n>", result = "Neovim Normal mode to select/copy; i resumes input." },
     { heading = "NEW WORK" },
     { key = "a", result = "Agent + instruction → start + attach." },
     { key = "R", result = "Agent → resume picker + attach." },
@@ -363,11 +373,29 @@ local function render_guidance(lines, err)
   end
 end
 
-function M.render()
+local function empty_view_lines(stale)
+  if stale then
+    return { "No agents in the last view.", "r: retry   A: show all agents", "q: return to editing" }
+  end
+  local agents = state.agents()
+  if #agents == 0 then
+    return { "No agents in this Herdr session.", "a: start   R: resume", "q: return to editing" }
+  end
+  local all_reviewed = state.counts().done == 0
+  for _, agent in ipairs(agents) do
+    all_reviewed = all_reviewed and agent.status == "done"
+  end
+  if all_reviewed then
+    return { "All completions reviewed.", "A: show reviewed agents", "q: return to editing" }
+  end
+  return { "No agents match this view.", "A: show all agents", "q: return to editing" }
+end
+
+function M.render(preferred_id)
   if not valid_buffer(list_buffer) then
     return
   end
-  local selected = selected_id()
+  local selected = preferred_id or selected_id()
   local status = state.get()
   local width = valid_window(list_window) and vim.api.nvim_win_get_width(list_window) or 44
   local view_label = show_all and "all agents" or "this project + attention elsewhere"
@@ -410,7 +438,9 @@ function M.render()
       end
     end
     if #groups == 0 then
-      table.insert(lines, "No matching agents. Press a to start one.")
+      for _, line in ipairs(empty_view_lines(status.stale)) do
+        table.insert(lines, truncate(line, width - 1))
+      end
     end
     for _, group in ipairs(groups) do
       table.insert(lines, truncate(group.label, width - 2))
@@ -461,8 +491,24 @@ function M.render()
   vim.schedule(M.refresh_preview)
 end
 
-local function map(lhs, callback, description)
-  vim.keymap.set("n", lhs, callback, { buffer = list_buffer, silent = true, nowait = true, desc = description })
+local function move_selection(direction)
+  local rows = vim.tbl_keys(line_agents)
+  table.sort(rows)
+  if #rows == 0 then
+    return
+  end
+  local cursor = vim.api.nvim_win_get_cursor(list_window)[1]
+  local index = direction > 0 and #rows or 1
+  for position, line in ipairs(rows) do
+    if direction > 0 and line > cursor then
+      index = math.min(#rows, position + vim.v.count1 - 1)
+      break
+    elseif direction < 0 and line < cursor then
+      index = math.max(1, position - vim.v.count1 + 1)
+    end
+  end
+  vim.api.nvim_win_set_cursor(list_window, { rows[index], 0 })
+  M.refresh_preview()
 end
 
 local function require_agent_row()
@@ -494,6 +540,18 @@ local function rename_selected()
   end
 end
 
+local function acknowledge_selected()
+  local agent = require_agent_row()
+  if not agent then
+    return
+  end
+  if not state.acknowledge(agent.terminal_id) then
+    vim.notify("Select a completed agent with fresh state first", vim.log.levels.INFO, { title = "Signalbox" })
+    return
+  end
+  M.render()
+end
+
 local function toggle_explanation()
   if not require_agent_row() then
     return
@@ -516,20 +574,24 @@ local function toggle_help()
   end
 end
 
-local function configure_list_buffer()
-  vim.bo[list_buffer].buftype = "nofile"
-  vim.bo[list_buffer].bufhidden = "hide"
-  vim.bo[list_buffer].swapfile = false
-  vim.bo[list_buffer].modifiable = false
-  vim.bo[list_buffer].filetype = "signalbox"
-  vim.bo[list_buffer].buflisted = false
-  pcall(vim.api.nvim_buf_set_name, list_buffer, "signalbox://board")
+local function configure_buffer(buffer, filetype, name)
+  vim.bo[buffer].buftype = "nofile"
+  vim.bo[buffer].bufhidden = "hide"
+  vim.bo[buffer].swapfile = false
+  vim.bo[buffer].modifiable = false
+  vim.bo[buffer].filetype = filetype
+  vim.bo[buffer].buflisted = false
+  pcall(vim.api.nvim_buf_set_name, buffer, "signalbox://" .. name)
+  local function map(lhs, callback, description)
+    vim.keymap.set("n", lhs, callback, { buffer = buffer, silent = true, nowait = true, desc = description })
+  end
 
   map("<CR>", attach_selected, "Attach to agent")
   map("i", attach_selected, "Attach and type in agent")
   map("p", prompt_selected, "Prompt agent")
   map("s", prompt_selected, "Prompt agent")
   map("n", rename_selected, "Rename agent")
+  map("x", acknowledge_selected, "Acknowledge completion")
   map("e", toggle_explanation, "Toggle agent state explanation")
   map("a", function()
     require("signalbox").start(nil, { cwd = origin_root })
@@ -562,68 +624,23 @@ local function configure_list_buffer()
   map("?", toggle_help, "Toggle input guide")
   map("1", focus_list_window, "Focus agent list")
   map("2", focus_preview_window, "Focus right pane")
-  map("<Tab>", focus_preview_window, "Focus read-only preview")
-
-  vim.api.nvim_create_autocmd("CursorMoved", {
-    buffer = list_buffer,
-    callback = function()
-      vim.schedule(M.refresh_preview)
-    end,
-  })
-end
-
-local function configure_preview_buffer()
-  vim.bo[preview_buffer].buftype = "nofile"
-  vim.bo[preview_buffer].bufhidden = "hide"
-  vim.bo[preview_buffer].swapfile = false
-  vim.bo[preview_buffer].modifiable = false
-  vim.bo[preview_buffer].filetype = "signalbox-preview"
-  vim.bo[preview_buffer].buflisted = false
-  pcall(vim.api.nvim_buf_set_name, preview_buffer, "signalbox://preview")
-  local opts = { buffer = preview_buffer, silent = true, nowait = true }
-  vim.keymap.set("n", "<CR>", attach_selected, vim.tbl_extend("force", opts, { desc = "Attach to agent" }))
-  vim.keymap.set("n", "i", attach_selected, vim.tbl_extend("force", opts, { desc = "Attach and type in agent" }))
-  vim.keymap.set("n", "p", prompt_selected, vim.tbl_extend("force", opts, { desc = "Prompt agent" }))
-  vim.keymap.set("n", "s", prompt_selected, vim.tbl_extend("force", opts, { desc = "Prompt agent" }))
-  vim.keymap.set("n", "n", rename_selected, vim.tbl_extend("force", opts, { desc = "Rename agent" }))
-  vim.keymap.set(
-    "n",
-    "e",
-    toggle_explanation,
-    vim.tbl_extend("force", opts, { desc = "Toggle agent state explanation" })
-  )
-  vim.keymap.set("n", "a", function()
-    require("signalbox").start(nil, { cwd = origin_root })
-  end, vim.tbl_extend("force", opts, { desc = "Start agent" }))
-  vim.keymap.set("n", "R", function()
-    require("signalbox").resume(nil, { cwd = origin_root })
-  end, vim.tbl_extend("force", opts, { desc = "Resume conversation in Herdr" }))
-  vim.keymap.set("n", "g", function()
-    local agent = selected_agent()
-    M.close()
-    require("signalbox.actions").lazygit(agent, origin_root)
-  end, vim.tbl_extend("force", opts, { desc = "Open Lazygit" }))
-  vim.keymap.set("n", "d", function()
-    local agent = selected_agent()
-    M.close()
-    require("signalbox.actions").diffview(agent, origin_root)
-  end, vim.tbl_extend("force", opts, { desc = "Open Diffview" }))
-  vim.keymap.set("n", "v", function()
-    preview_enabled = not preview_enabled
-    M._reopen_windows()
-  end, vim.tbl_extend("force", opts, { desc = "Toggle preview" }))
-  vim.keymap.set("n", "A", function()
-    show_all = not show_all
-    M.render()
-  end, vim.tbl_extend("force", opts, { desc = "Toggle all agents" }))
-  vim.keymap.set("n", "r", function()
-    require("signalbox").refresh()
-  end, vim.tbl_extend("force", opts, { desc = "Refresh agents" }))
-  vim.keymap.set("n", "q", M.close, vim.tbl_extend("force", opts, { desc = "Close Signalbox" }))
-  vim.keymap.set("n", "?", toggle_help, vim.tbl_extend("force", opts, { desc = "Toggle input guide" }))
-  vim.keymap.set("n", "1", focus_list_window, vim.tbl_extend("force", opts, { desc = "Focus agent list" }))
-  vim.keymap.set("n", "2", focus_preview_window, vim.tbl_extend("force", opts, { desc = "Focus right pane" }))
-  vim.keymap.set("n", "<Tab>", focus_list_window, vim.tbl_extend("force", opts, { desc = "Focus agent list" }))
+  if buffer == list_buffer then
+    map("j", function()
+      move_selection(1)
+    end, "Next agent")
+    map("k", function()
+      move_selection(-1)
+    end, "Previous agent")
+    map("<Tab>", focus_preview_window, "Focus read-only preview")
+    vim.api.nvim_create_autocmd("CursorMoved", {
+      buffer = buffer,
+      callback = function()
+        vim.schedule(M.refresh_preview)
+      end,
+    })
+  else
+    map("<Tab>", focus_list_window, "Focus agent list")
+  end
 end
 
 local function open_windows()
@@ -718,27 +735,32 @@ function M._resize_windows()
   M.render()
 end
 
-function M.open()
+function M.open(opts)
+  opts = opts or {}
   if M.is_open() then
     vim.api.nvim_set_current_win(list_window)
-    return
+  else
+    origin_root = require("signalbox.context").project_root(0)
+    preview_enabled = config.get().board.preview
+    help_visible = false
+    preview_mode = "output"
+    preview_target = nil
+    if not valid_buffer(list_buffer) then
+      list_buffer = vim.api.nvim_create_buf(false, true)
+      configure_buffer(list_buffer, "signalbox", "board")
+    end
+    if not valid_buffer(preview_buffer) then
+      preview_buffer = vim.api.nvim_create_buf(false, true)
+      configure_buffer(preview_buffer, "signalbox-preview", "preview")
+    end
+    open_windows()
+    state.set_board_visible(true)
   end
-  origin_root = require("signalbox.context").project_root(0)
-  preview_enabled = config.get().board.preview
-  help_visible = false
-  preview_mode = "output"
-  preview_target = nil
-  if not valid_buffer(list_buffer) then
-    list_buffer = vim.api.nvim_create_buf(false, true)
-    configure_list_buffer()
+  M.render(opts.terminal_id)
+  if opts.terminal_id and selected_id() ~= opts.terminal_id and state.agent(opts.terminal_id) then
+    show_all = true
+    M.render(opts.terminal_id)
   end
-  if not valid_buffer(preview_buffer) then
-    preview_buffer = vim.api.nvim_create_buf(false, true)
-    configure_preview_buffer()
-  end
-  open_windows()
-  state.set_board_visible(true)
-  M.render()
 end
 
 function M.close()

@@ -213,7 +213,7 @@ h.test("cold-start prompt waits for the initial Herdr snapshot", function()
 
   signalbox.setup()
   signalbox.prompt("term_1", "hello")
-  h.eq(1, snapshots)
+  h.eq(2, snapshots)
   h.eq({ target = "term_1:pane", text = "hello" }, prompted)
 
   signalbox._reset()
@@ -266,7 +266,11 @@ h.test("cold-start context freezes the invoked buffer before snapshot completion
     agents = { agent("term_1", "worker") },
     workspaces = { { workspace_id = "w1", label = "repo" } },
   })
-  h.eq("term_1:pane", prompted.target)
+  h.eq(nil, prompted)
+  local moved = agent("term_1", "worker")
+  moved.target = "moved:pane"
+  snapshot_callback({ agents = { moved }, workspaces = {} })
+  h.eq("moved:pane", prompted.target)
   h.contains(prompted.text, "original context")
   h.truthy(not prompted.text:find("changed after invocation", 1, true))
 
@@ -298,6 +302,164 @@ h.test("agent command targets use stable IDs and reject ambiguous names", functi
   h.eq(nil, resolved)
   h.contains(err, "ambiguous")
 end)
+
+for _, command in ipairs({ "prompt", "rename", "attach" }) do
+  h.test("cancelling agent selection stops " .. command .. " without opening another input", function()
+    local signalbox = require("signalbox")
+    local state = require("signalbox.state")
+    signalbox._reset()
+    state._reset()
+    local original_start, original_select, original_input = state.start, vim.ui.select, vim.ui.input
+    h.defer(function()
+      state.start, vim.ui.select, vim.ui.input = original_start, original_select, original_input
+      signalbox._reset()
+      state._reset()
+    end)
+    state.start = function() end
+    signalbox.setup()
+    state._set_emit(function() end)
+    state._accept({ agents = { agent("term_1", "one"), agent("term_2", "two") }, workspaces = {} })
+    vim.ui.select = function(_, _, callback)
+      callback(nil, nil)
+    end
+    vim.ui.input = function()
+      error("cancelled selection must not open an input")
+    end
+    signalbox[command]()
+  end)
+end
+
+h.test("prompting a known blocked agent explains how to answer without opening an input", function()
+  local signalbox = require("signalbox")
+  local state = require("signalbox.state")
+  signalbox._reset()
+  state._reset()
+  local original_start, original_input, original_notify = state.start, vim.ui.input, vim.notify
+  h.defer(function()
+    state.start, vim.ui.input, vim.notify = original_start, original_input, original_notify
+    signalbox._reset()
+    state._reset()
+  end)
+  state.start = function() end
+  signalbox.setup()
+  state._set_emit(function() end)
+  state._accept({ agents = { agent("term_1", "worker", "blocked") }, workspaces = {} })
+  local notice
+  vim.notify = function(value)
+    notice = value
+  end
+  vim.ui.input = function()
+    error("a blocked agent needs its native dialog, not a prompt input")
+  end
+  signalbox.prompt("term_1")
+  h.contains(notice, ":SignalboxAttach term_1")
+  h.contains(notice, "approval or an answer")
+end)
+
+for _, scenario in ipairs({
+  "moved",
+  "missing",
+  "replaced",
+  "snapshot failure",
+  "server failure",
+  "send failure",
+  "blocked before send",
+  "blocked at submission",
+}) do
+  h.test("prompt revalidates its target: " .. scenario, function()
+    local signalbox = require("signalbox")
+    local state = require("signalbox.state")
+    local client = require("signalbox.client")
+    signalbox._reset()
+    state._reset()
+    local originals = {
+      start = state.start,
+      ensure = client.ensure_server,
+      snapshot = client.snapshot,
+      prompt = client.prompt,
+      input = vim.ui.input,
+      notify = vim.notify,
+    }
+    local buffers = vim.api.nvim_list_bufs()
+    h.defer(function()
+      state.start = originals.start
+      client.ensure_server = originals.ensure
+      client.snapshot = originals.snapshot
+      client.prompt = originals.prompt
+      vim.ui.input = originals.input
+      vim.notify = originals.notify
+      signalbox._reset()
+      state._reset()
+      for _, buffer in ipairs(vim.api.nvim_list_bufs()) do
+        if not vim.tbl_contains(buffers, buffer) then
+          vim.api.nvim_buf_delete(buffer, { force = true })
+        end
+      end
+    end)
+    state.start = function() end
+    signalbox.setup()
+    state._set_emit(function() end)
+    state._accept({ agents = { agent("term_1", "worker") }, workspaces = {} })
+    local input
+    vim.ui.input = function(_, callback)
+      input = callback
+    end
+    local notices = {}
+    vim.notify = function(value)
+      notices[#notices + 1] = value
+    end
+    client.ensure_server = function(callback)
+      callback(scenario ~= "server failure", { message = "server unavailable" })
+    end
+    client.snapshot = function(callback)
+      if scenario == "snapshot failure" then
+        callback(nil, { message = "offline" })
+        return
+      end
+      local current = agent("term_1", "worker")
+      current.target = "new:pane"
+      if scenario == "replaced" then
+        current.kind = "claude"
+      elseif scenario == "blocked before send" then
+        current.status = "blocked"
+      end
+      callback({ agents = scenario == "missing" and {} or { current }, workspaces = {} })
+    end
+    local sent
+    client.prompt = function(target, text, callback)
+      sent = { target, text }
+      if scenario == "send failure" then
+        callback(nil, { message = "delivery timeout" })
+      elseif scenario == "blocked at submission" then
+        callback(nil, { api_code = "agent_blocked", message = "agent is blocked" })
+      else
+        callback({})
+      end
+    end
+    signalbox.prompt("term_1")
+    input("keep this\nexact instruction")
+    if scenario == "moved" then
+      h.eq({ "new:pane", "keep this\nexact instruction" }, sent)
+    else
+      if scenario == "send failure" then
+        h.contains(table.concat(notices, "\n"), "delivery was not confirmed")
+      elseif scenario == "blocked at submission" then
+        h.truthy(sent ~= nil)
+      else
+        h.eq(nil, sent)
+      end
+      if scenario:find("blocked", 1, true) then
+        h.contains(table.concat(notices, "\n"), "instruction was not sent")
+        h.contains(table.concat(notices, "\n"), ":SignalboxAttach term_1")
+      end
+      local buffer = tonumber(table.concat(notices, "\n"):match(":buffer (%d+)"))
+      h.truthy(buffer, "failure should identify the recoverable draft buffer")
+      h.eq({ "keep this", "exact instruction" }, vim.api.nvim_buf_get_lines(buffer, 0, -1, false))
+      h.eq("nofile", vim.bo[buffer].buftype)
+      h.eq(false, vim.bo[buffer].swapfile)
+    end
+  end)
+end
 
 h.test("rename prompts with the current role and refreshes after Herdr accepts it", function()
   local signalbox = require("signalbox")
@@ -738,6 +900,12 @@ h.test("starting an agent collects an initial instruction and attaches its live 
   h.eq("retry this instruction", retry_defaults[1])
 
   local retry_prompted
+  client.snapshot = function(callback)
+    callback({
+      agents = { agent("term_3", "stalled-instruction", "idle") },
+      workspaces = { { workspace_id = "w1", label = "signalbox.nvim" } },
+    })
+  end
   client.prompt_until_working = function(target, instruction, callback)
     retry_prompted = { target = target, instruction = instruction }
     callback({ type = "agent_prompted" })

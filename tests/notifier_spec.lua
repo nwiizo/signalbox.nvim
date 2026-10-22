@@ -41,6 +41,23 @@ h.test("notifier respects disabled done notifications", function()
   h.eq(0, count)
 end)
 
+h.test("notifier distinguishes completions with the same terminal revision", function()
+  reset()
+  local count = 0
+  notifier._set_notify(function()
+    count = count + 1
+  end)
+  local event = { terminal_id = "a", status = "done", revision = 52, completion_seq = 5, name = "api" }
+  notifier.on_transition(event)
+  event.completion_seq = 7
+  notifier.on_transition(event)
+  notifier.on_transition(event)
+  h.eq(2, count)
+  event.revision = 53
+  notifier.on_transition(event)
+  h.eq(2, count)
+end)
+
 h.test("notifier follows a vim.notify provider installed after Signalbox setup", function()
   reset()
   local original_notify = vim.notify

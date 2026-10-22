@@ -5,6 +5,7 @@ local M = {}
 
 local current
 local by_id = {}
+local acknowledged = {}
 local stale = false
 local last_error
 local in_flight = false
@@ -44,6 +45,7 @@ local function emit_transition(agent, previous_status)
     previous_status = previous_status,
     status = agent.status,
     revision = agent.revision,
+    completion_seq = agent.completion_seq,
     name = agent.name,
     title = agent.title,
     workspace_id = agent.workspace_id,
@@ -83,7 +85,9 @@ end
 local function counts(agents)
   local result = { blocked = 0, working = 0, done = 0, idle = 0, unknown = 0 }
   for _, agent in ipairs(agents or {}) do
-    result[agent.status] = (result[agent.status] or 0) + 1
+    if agent.status ~= "done" or not acknowledged[agent.terminal_id] then
+      result[agent.status] = (result[agent.status] or 0) + 1
+    end
   end
   return result
 end
@@ -102,6 +106,12 @@ function M._accept(snapshot)
   for _, agent in ipairs(snapshot.agents) do
     next_by_id[agent.terminal_id] = agent
   end
+  for id, completion in pairs(acknowledged) do
+    local agent = next_by_id[id]
+    if not agent or agent.status ~= "done" or completion ~= (agent.completion_seq or true) then
+      acknowledged[id] = nil
+    end
+  end
 
   current = snapshot
   by_id = next_by_id
@@ -111,7 +121,12 @@ function M._accept(snapshot)
   if initialized then
     for _, agent in ipairs(snapshot.agents) do
       local old = previous[agent.terminal_id]
-      if old and old.status ~= agent.status then
+      local new_completion = old
+        and agent.status == "done"
+        and agent.completion_seq ~= nil
+        and old.completion_seq ~= nil
+        and agent.completion_seq ~= old.completion_seq
+      if old and (old.status ~= agent.status or new_completion) then
         emit_transition(agent, old.status)
       elseif not old and attention_status[agent.status] then
         emit_transition(agent, nil)
@@ -239,6 +254,16 @@ function M.counts()
   return counts(M.agents())
 end
 
+function M.acknowledge(terminal_id)
+  local agent = by_id[terminal_id]
+  if stale or not agent or agent.status ~= "done" then
+    return false
+  end
+  acknowledged[terminal_id] = agent.completion_seq or true
+  emit_user("SignalboxUpdated", { stale = stale, counts = M.counts() })
+  return true
+end
+
 local function same_project(agent_cwd, root)
   if not agent_cwd or not root then
     return false
@@ -269,9 +294,10 @@ function M.grouped_agents(opts)
   for index, agent in ipairs(current.agents) do
     source_order[agent.terminal_id] = index
     local visible = opts.all == true
-      or opts.root == nil
-      or same_project(agent.cwd, opts.root)
-      or attention_status[agent.status]
+      or (
+        not acknowledged[agent.terminal_id]
+        and (opts.root == nil or same_project(agent.cwd, opts.root) or attention_status[agent.status])
+      )
     if visible then
       local group = groups_by_id[agent.workspace_id]
       if not group then
@@ -282,7 +308,9 @@ function M.grouped_agents(opts)
       table.insert(group.agents, agent)
     end
   end
-  for _, group in ipairs(groups) do
+  local group_order = {}
+  for index, group in ipairs(groups) do
+    group_order[group.workspace_id] = index
     table.sort(group.agents, function(left, right)
       local left_rank = rank[left.status]
       local right_rank = rank[right.status]
@@ -292,9 +320,18 @@ function M.grouped_agents(opts)
       return left_rank < right_rank
     end)
   end
-  return vim.tbl_filter(function(group)
+  groups = vim.tbl_filter(function(group)
     return #group.agents > 0
   end, groups)
+  table.sort(groups, function(left, right)
+    local left_rank = rank[left.agents[1].status]
+    local right_rank = rank[right.agents[1].status]
+    if left_rank == right_rank then
+      return group_order[left.workspace_id] < group_order[right.workspace_id]
+    end
+    return left_rank < right_rank
+  end)
+  return groups
 end
 
 function M.stop()
@@ -325,6 +362,7 @@ function M._reset()
   M.stop()
   current = nil
   by_id = {}
+  acknowledged = {}
   stale = false
   last_error = nil
   in_flight = false

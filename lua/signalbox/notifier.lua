@@ -26,7 +26,9 @@ function M.on_transition(event)
   if not config.get().notifications[event.status] then
     return
   end
-  local key = table.concat({ event.terminal_id, event.status, tostring(event.revision) }, ":")
+  local revision = event.status == "done" and event.completion_seq ~= nil and ("completion:" .. event.completion_seq)
+    or tostring(event.revision)
+  local key = table.concat({ event.terminal_id, event.status, revision }, ":")
   if seen[key] then
     return
   end

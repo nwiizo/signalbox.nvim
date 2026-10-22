@@ -128,17 +128,93 @@ h.test("state shows the current project plus attention elsewhere", function()
   }))
   local groups = state.grouped_agents({ root = "/repo" })
   h.eq(
-    { "local" },
+    { "remote-blocked" },
     vim.tbl_map(function(item)
       return item.name
     end, groups[1].agents)
   )
   h.eq(
-    { "remote-blocked" },
+    { "local" },
     vim.tbl_map(function(item)
       return item.name
     end, groups[2].agents)
   )
+end)
+
+h.test("workspace priority uses visible agents and preserves ties", function()
+  reset()
+  state._set_transition_handler(function() end)
+  state._set_emit(function() end)
+  state._accept(snapshot({
+    agent("idle", "idle", "w1", 1, "/repo"),
+    agent("hidden", "working", "w1", 1, "/other"),
+    agent("local", "idle", "w2", 1, "/repo"),
+  }))
+  h.eq("w1", state.grouped_agents({ root = "/repo" })[1].workspace_id)
+  state._accept(snapshot({ agent("work", "working", "w1"), agent("urgent", "blocked", "w2") }))
+  h.eq("w2", state.grouped_agents({ all = true })[1].workspace_id)
+end)
+
+h.test("acknowledged completions stay accessible and resurface on a new completion", function()
+  reset()
+  state._set_transition_handler(function() end)
+  local events = {}
+  state._set_emit(function(pattern, data)
+    events[#events + 1] = { pattern, data }
+  end)
+  state._accept(snapshot({ agent("done", "done", "w1", 1, "/repo") }))
+  h.eq(true, state.acknowledge("done"))
+  h.eq(0, state.counts().done)
+  h.eq({}, state.grouped_agents({ root = "/repo" }))
+  h.eq("done", state.grouped_agents({ all = true })[1].agents[1].status)
+  h.eq(0, events[#events][2].counts.done)
+  state._accept(snapshot({ agent("done", "done", "w2", 2, "/repo") }))
+  h.eq(0, state.counts().done)
+  state._fail({ kind = "process", message = "offline" })
+  h.eq(0, state.counts().done)
+  state._accept(snapshot({ agent("done", "working") }))
+  h.eq(false, state.acknowledge("done"))
+  state._accept(snapshot({ agent("done", "done") }))
+  h.eq(1, state.counts().done)
+  h.eq(true, state.acknowledge("done"))
+  state._accept(snapshot({}))
+  state._accept(snapshot({ agent("done", "done") }))
+  h.eq(1, state.counts().done)
+  state.acknowledge("done")
+  reset()
+  state._accept(snapshot({ agent("done", "done") }))
+  h.eq(1, state.counts().done)
+end)
+
+h.test("a new completion between snapshots clears acknowledgement and notifies once", function()
+  reset()
+  local transitions = {}
+  state._set_transition_handler(function(event)
+    transitions[#transitions + 1] = event
+  end)
+  state._set_emit(function() end)
+  local completed = agent("done", "done", "w1", 1, "/repo")
+  completed.completion_seq = 10
+  state._accept(snapshot({ completed }))
+  h.eq(true, state.acknowledge("done"))
+
+  completed = vim.deepcopy(completed)
+  completed.revision = 2
+  state._accept(snapshot({ completed }))
+  h.eq(0, state.counts().done)
+  h.eq(0, #transitions)
+
+  completed = vim.deepcopy(completed)
+  completed.completion_seq = 12
+  completed.revision = 3
+  state._accept(snapshot({ completed }))
+  h.eq(1, state.counts().done)
+  h.eq("done", state.grouped_agents({ root = "/repo" })[1].agents[1].terminal_id)
+  h.eq(1, #transitions)
+  h.eq("done", transitions[1].status)
+  h.eq(12, transitions[1].completion_seq)
+  state._accept(snapshot({ vim.deepcopy(completed) }))
+  h.eq(1, #transitions)
 end)
 
 h.test("state retains the last good snapshot and marks it stale on failure", function()

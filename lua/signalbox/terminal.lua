@@ -34,27 +34,29 @@ local function focus_buffer(bufnr)
   return window
 end
 
-local function install_return_mapping(bufnr)
-  local function return_to_board()
-    local window = vim.api.nvim_get_current_win()
-    if vim.api.nvim_win_get_buf(window) == bufnr and #vim.api.nvim_tabpage_list_wins(0) > 1 then
-      vim.api.nvim_win_close(window, true)
-    end
-    if vim.api.nvim_buf_is_valid(bufnr) then
-      vim.api.nvim_buf_delete(bufnr, { force = true })
-    end
-    vim.schedule(function()
-      require("signalbox.board").open()
-    end)
+local function return_to_board(bufnr, terminal_id)
+  local window = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_get_buf(window) == bufnr and #vim.api.nvim_tabpage_list_wins(0) > 1 then
+    vim.api.nvim_win_close(window, true)
   end
+  if vim.api.nvim_buf_is_valid(bufnr) then
+    vim.api.nvim_buf_delete(bufnr, { force = true })
+  end
+  vim.schedule(function()
+    require("signalbox.board").open({ terminal_id = terminal_id })
+  end)
+end
+
+local function install_return_mapping(bufnr, terminal_id)
   local opts = {
     buffer = bufnr,
     silent = true,
     nowait = true,
     desc = "Return to Signalbox",
   }
-  vim.keymap.set("t", config.get().terminal.return_key, return_to_board, opts)
-  vim.keymap.set("n", config.get().terminal.return_key, return_to_board, opts)
+  vim.keymap.set({ "t", "n" }, config.get().terminal.return_key, function()
+    return_to_board(bufnr, terminal_id)
+  end, opts)
 end
 
 function M.attach(agent, opts)
@@ -72,7 +74,7 @@ function M.attach(agent, opts)
   vim.bo[bufnr].bufhidden = "wipe"
   vim.bo[bufnr].swapfile = false
   vim.b[bufnr].signalbox_terminal_id = agent.terminal_id
-  install_return_mapping(bufnr)
+  install_return_mapping(bufnr, agent.terminal_id)
   local attach_output = ""
   local job_id, attach_err = client.attach(agent.target or agent.pane_id, opts.takeover == true, {
     on_stdout = function(_, data)
@@ -82,11 +84,13 @@ function M.attach(agent, opts)
     on_exit = function(_, code)
       vim.schedule(function()
         local record = terminals[agent.terminal_id]
-        local unexpected = record and record.bufnr == bufnr
+        local active = record and record.bufnr == bufnr
         if record and record.bufnr == bufnr then
           terminals[agent.terminal_id] = nil
         end
-        if unexpected and code ~= 0 and vim.v.exiting == vim.NIL then
+        if active and code == 0 and vim.v.exiting == vim.NIL and vim.api.nvim_get_current_buf() == bufnr then
+          return_to_board(bufnr, agent.terminal_id)
+        elseif active and code ~= 0 and vim.v.exiting == vim.NIL then
           local lower = attach_output:lower()
           if lower:find("takeover", 1, true) or lower:find("another client", 1, true) then
             vim.notify(

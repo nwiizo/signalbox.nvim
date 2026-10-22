@@ -94,6 +94,18 @@ h.test("client normalizes documented snapshot fields and ignores unknown fields"
   h.eq("repo", result.workspaces[1].label)
 end)
 
+h.test("client preserves optional Herdr completion sequences", function()
+  reset()
+  local result = client._normalize_snapshot(raw_snapshot(raw_agent({ completion_seq = 42 })))
+  h.eq(42, result.agents[1].completion_seq)
+  for _, value in ipairs({ vim.NIL, "42", false }) do
+    result = client._normalize_snapshot(raw_snapshot(raw_agent({ completion_seq = value })))
+    h.eq(nil, result.agents[1].completion_seq)
+  end
+  result = client._normalize_snapshot(raw_snapshot(raw_agent()))
+  h.eq(nil, result.agents[1].completion_seq)
+end)
+
 h.test("client maps future statuses to unknown but rejects missing required fields", function()
   reset()
   config.setup()

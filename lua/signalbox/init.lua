@@ -128,7 +128,11 @@ local function with_target(target, callback)
         format_item = function(agent)
           return string.format("%-12s %-8s %s  [%s]", agent.name, agent.status, agent.cwd or "", agent.terminal_id)
         end,
-      }, callback)
+      }, function(agent)
+        if agent then
+          callback(agent)
+        end
+      end)
     end
   end)
 end
@@ -489,8 +493,16 @@ function M.rename(target)
   end)
 end
 
+local function blocked_guidance(agent)
+  return string.format(
+    "%s is waiting for approval or an answer; use :SignalboxAttach %s to respond in the agent terminal",
+    agent.name,
+    agent.terminal_id
+  )
+end
+
 local function prompt_agent(agent, text, recovery)
-  if not text or text == "" then
+  if not agent or not text or text == "" then
     return
   end
   if not valid_instruction(text) then
@@ -499,22 +511,66 @@ local function prompt_agent(agent, text, recovery)
   if recovery then
     pending_instructions[agent.terminal_id] = text
   end
-  with_server(function()
-    local client = require("signalbox.client")
-    local send = recovery and client.prompt_until_working or client.prompt
-    send(agent.target, text, function(_, err)
-      if err then
-        if recovery and has_api_code(err, "agent_prompt_stalled") then
-          notify_prompt_stalled(agent)
-        else
-          notify_error(err)
-        end
+  local function retain_draft(err, attempted)
+    local buffer = vim.api.nvim_create_buf(true, true)
+    vim.bo[buffer].bufhidden = "hide"
+    vim.api.nvim_buf_set_name(buffer, "signalbox://draft/" .. buffer)
+    vim.api.nvim_buf_set_lines(buffer, 0, -1, false, vim.split(text, "\n", { plain = true }))
+    local outcome = attempted and "delivery was not confirmed; inspect the agent before retrying"
+      or "instruction was not sent"
+    notify_error(
+      message(err) .. "; " .. outcome .. ". Close Signalbox, then :buffer " .. buffer .. " to recover the draft"
+    )
+  end
+  local client = require("signalbox.client")
+  local request_generation = lifecycle_generation
+  client.ensure_server(function(ok, server_err)
+    if not ok then
+      retain_draft(server_err)
+      return
+    end
+    client.snapshot(function(snapshot, snapshot_err)
+      if snapshot_err then
+        retain_draft(snapshot_err)
         return
       end
-      if recovery then
-        pending_instructions[agent.terminal_id] = nil
+      local current
+      for _, candidate in ipairs(snapshot.agents) do
+        if candidate.terminal_id == agent.terminal_id then
+          current = candidate
+          break
+        end
       end
-      vim.notify("prompted " .. agent.name, vim.log.levels.INFO, { title = "Signalbox" })
+      if
+        request_generation ~= lifecycle_generation
+        or not current
+        or current.kind ~= agent.kind
+        or current.registered_name ~= agent.registered_name
+      then
+        retain_draft("agent or Signalbox changed while preparing the instruction")
+        return
+      end
+      if current.status == "blocked" then
+        retain_draft(blocked_guidance(current))
+        return
+      end
+      local send = recovery and client.prompt_until_working or client.prompt
+      send(current.target, text, function(_, err)
+        if err then
+          if has_api_code(err, "agent_blocked") then
+            retain_draft(blocked_guidance(current))
+          elseif recovery and has_api_code(err, "agent_prompt_stalled") then
+            notify_prompt_stalled(current)
+          else
+            retain_draft(err, true)
+          end
+          return
+        end
+        if recovery then
+          pending_instructions[agent.terminal_id] = nil
+        end
+        vim.notify("prompted " .. current.name, vim.log.levels.INFO, { title = "Signalbox" })
+      end)
     end)
   end)
 end
@@ -552,6 +608,10 @@ function M.prompt(target, text)
     return
   end
   with_target(target, function(agent)
+    if agent.status == "blocked" then
+      vim.notify(blocked_guidance(agent), vim.log.levels.INFO, { title = "Signalbox" })
+      return
+    end
     local recovery = pending_instructions[agent.terminal_id] ~= nil
     vim.ui.input({ prompt = "Instruction: ", default = pending_instructions[agent.terminal_id] }, function(input)
       prompt_agent(agent, input, recovery)

@@ -2,7 +2,41 @@
 
 Signalbox treats Herdr's CLI and snapshot schema as an upstream contract. A scheduled GitHub Actions workflow checks the canonical `herdrdev/herdr` latest stable release every day. When its tag differs from Signalbox's verified version, the workflow opens one compatibility-audit issue for that tag, including closed issues in duplicate detection.
 
-The currently verified release is **Herdr 0.9.0** (endpoint generation 1, private protocol 22). Signalbox still accepts Herdr 0.7.5 or newer.
+The currently verified release is **Herdr 0.9.5** (endpoint generation 1, private protocol 22). Signalbox still accepts Herdr 0.7.5 or newer.
+
+## Herdr 0.9.5 audit
+
+Validated on 2026-10-20 against [Herdr 0.9.5](https://github.com/herdrdev/herdr/releases/tag/v0.9.5), including the release notes from 0.9.1 through 0.9.5 and the source diff from 0.9.0 to tag `v0.9.5` (`2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01`). This rolls the pending audits [#5](https://github.com/nwiizo/signalbox.nvim/issues/5), [#9](https://github.com/nwiizo/signalbox.nvim/issues/9), [#10](https://github.com/nwiizo/signalbox.nvim/issues/10), and [#11](https://github.com/nwiizo/signalbox.nvim/issues/11) forward to 0.9.5; intermediate binaries were not each run separately. The earlier 0.9.0 audit remains below.
+
+### Compatibility and changes
+
+The snapshot fields and CLI arguments consumed by Signalbox remain compatible. The audit compared snapshot, workspace/tab creation, agent start, prompt/wait, recent-unwrapped/visible read, explain, rename, attach, pane move, server status, and manifest status. Endpoint generation 1 and private protocol 22 remain unchanged. Prompt activity confirmation still has a five-second stall boundary, so Signalbox retains its six-second wait and eight-second process ceiling.
+
+The added optional `completion_seq` identifies completions independently of terminal `revision`. Actual Codex runs produced distinct completion numbers with the same revision. Signalbox now retains that number, clears an earlier acknowledgement when it changes, and delivers one notification for each completion. A working-to-done cycle entirely between snapshots therefore reappears in the attention view. Missing, null, or nonnumeric completion fields use the existing behavior; the minimum supported Herdr version remains 0.7.5.
+
+Herdr 0.9.5 installs Codex integration v10 with session tracking only; turn status comes from screen detection again. Claude integration v11 fixes named-session hook routing. Reinstall these integrations after upgrading, or use `:SignalboxUpdateAll`. Installation and current-version detection were checked in disposable provider configuration directories. No provider-screen heuristics were added to Signalbox. The removal of Herdr's custom pane-graphics API in 0.9.2 and the added saved-machine CLI forwarding do not affect Signalbox's existing commands.
+
+### Runtime verification
+
+The macOS arm64 smoke test used Herdr 0.9.5, Codex 0.163.0, current detection manifests (Codex and Claude 2026.10.11.1), and the actual LazyVim/Noice configuration on Neovim 0.12.6. Herdr config, state, sockets, provider configuration, and test workspaces were isolated from the existing server.
+
+| Operation | Observed result |
+| --- | --- |
+| Snapshot, start, prompt, and preview | Signalbox allocated workspaces and tabs, started real Codex agents, submitted instructions, observed working/done, and read both active and completed output. Codex returned the requested smoke-test markers. |
+| Prompt target movement (#6) | While the real instruction input was open, a pane moved from `w2:p1` to `w3:p1`, retaining its terminal ID. Submitting the input reached that same Codex agent and produced the requested reply. Closing another selected pane during input prevented submission and retained the exact text in a nofile buffer with swap disabled. |
+| Attention groups and acknowledgement (#7, #8) | A controlled reported agent becoming blocked moved its Space ahead of the completed Codex Space while preserving the selected terminal. Preview-side `x` removed the completion from counts, and `A` retained access. Stopping polling during a complete real Codex turn and refreshing afterward revealed the new completion. Completion numbers 16 and 18 shared revision 25; both delivered a notification through Noice. |
+| Explain, rename, attach, and floats | The preview displayed Herdr's matched detection rule; rename updated the selected agent. Direct attach entered terminal mode, `<C-g>` returned to the board, and closing the board returned to the editor. Resizing preserved list/preview window IDs, preview focus, and z-index 25 while their dimensions changed. |
+| Stalled initial instruction | Starting a second Codex with `/status` produced `agent_prompt_stalled`. Signalbox retained `/status`, attached, and prefilled it on explicit retry. Replacing it with an instruction produced the requested reply and cleared the draft. |
+
+`checkhealth signalbox` accepted the 0.9.5 client/server, Codex v10 and Claude v11 integrations, and both current detection manifests. The disposable server, panes, Neovim processes, Codex daemon, provider configuration, and test directories were removed afterward. The pre-existing Herdr 0.9.0 server remained running.
+
+### Local checks and limits
+
+`make check` passed 129 tests on both Neovim 0.10.4 and 0.12.6 with CI's StyLua 2.5.2 and Luacheck 1.2.0. Regression tests demonstrate failure before the completion-number fixes, including the second notification being suppressed when two completions share a terminal revision. Existing tests cover the prompt race, draft recovery, group ordering, acknowledgement reset, and older Herdr responses.
+
+The Linux `act` matrix was not reproduced in this environment: `act` was absent and Docker's daemon was unavailable. Both Neovim versions were checked natively on macOS instead. GitHub Actions must still run on the published commit before release. Authenticated Claude inference, SSH, Windows, and live handoff were not rerun in this audit; the earlier remote validation remains historical evidence.
+
+An upstream first-run limitation remains: Codex's hook-review screen was reported as idle/ready. Submitting the initial instruction opened the hook menu and Herdr reported working without delivering the instruction. Completing hook review and explicitly resending succeeded. Because this path reports success rather than `agent_prompt_stalled`, Signalbox cannot safely infer that it should replay the input.
 
 ## Herdr 0.9.0 audit
 
